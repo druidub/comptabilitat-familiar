@@ -1,0 +1,6 @@
+streamlit
+google-generativeai
+pandas
+plotly
+Pillow
+st-gsheets-connection

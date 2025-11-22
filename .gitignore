@@ -1,0 +1,4 @@
+# Això crea un fitxer ocult que li diu a Git què ha d'ignorar
+echo "venv/" > .gitignore
+echo "__pycache__/" >> .gitignore
+echo ".streamlit/" >> .gitignore
