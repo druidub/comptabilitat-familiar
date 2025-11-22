@@ -207,8 +207,8 @@ if not df_filtrat.empty:
             column_config={
                 "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "quantitat": st.column_config.NumberColumn("€", format="%.2f €"),
-                "categoria": st.column_config.SelectColumn("Categoria", options=["Alimentació", "Llar", "Oci", "Cotxe", "Nòmina", "Restauració", "Extra", "Salut", "Educació"]),
-                "tipus": st.column_config.SelectColumn("Tipus", options=["Ingrés", "Despesa"])
+                "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentació", "Llar", "Oci", "Cotxe", "Nòmina", "Restauració", "Extra", "Salut", "Educació"]),
+                "tipus": st.column_config.SelectboxColumn("Tipus", options=["Ingrés", "Despesa"])
             },
             key="editor_principal"
         )
