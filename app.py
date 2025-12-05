@@ -184,19 +184,71 @@ def processar_i_pujar(resposta):
     except Exception as e:
         st.error(f"Error: {e}")
 
-t1, t2 = st.tabs(["📝 Text", "📸 Foto"])
-with t1:
-    # Usem st.session_state per poder buidar-lo després
-    if "input_text_key" not in st.session_state:
-        st.session_state.input_text_key = ""
-
-    txt_val = st.text_area("Descriu moviments:", key="input_text_key", height=100, placeholder="Ex: Sopar ahir al Viena 45 euros")
+# Funció separada per gestionar l'enviament del text
+def enviar_text_callback():
+    # Agafem el text directament de l'estat
+    text_a_processar = st.session_state.input_text_key
     
-    if st.button("Enviar Text"):
-        if txt_val:
-            with st.spinner("Processant..."):
-                res = model.generate_content([prompt_comu, txt_val])
-                processar_i_pujar(res)
+    if text_a_processar:
+        # Mostrem un missatge temporal mentre processa (no podem usar st.spinner dins un callback fàcilment, però no passa res)
+        # Cridem a la IA
+        res = model.generate_content([prompt_comu, text_a_processar])
+        
+        # Processem la resposta (nota: he adaptat lleugerament processar_i_pujar perquè no faci rerun, el farem aquí)
+        txt = res.text.replace("```json", "").replace("```", "").strip()
+        try:
+            dades = json.loads(txt)
+            if isinstance(dades, dict): dades = [dades]
+            
+            noves = []
+            grup_id_unic = str(uuid.uuid4())[:8] 
+            msg_resum = ""
+
+            for item in dades:
+                data_f = item.get('data')
+                if not data_f or data_f == "AVUI": data_f = date.today()
+                
+                concepte = item.get('concepte', 'Varies')
+                quantitat = item.get('quantitat', 0)
+                
+                noves.append({
+                    "data": data_f,
+                    "concepte": concepte,
+                    "establiment": item.get('establiment', ''),
+                    "quantitat": quantitat,
+                    "categoria": item.get('categoria', 'Altres'),
+                    "tipus": item.get('tipus', 'Despesa'),
+                    "es_periodic": item.get('es_periodic', False),
+                    "id_grup": grup_id_unic
+                })
+                msg_resum += f"- {concepte}: {quantitat}€\n"
+            
+            df_act = carregar_dades()
+            df_final = pd.concat([df_act, pd.DataFrame(noves)], ignore_index=True)
+            guardar_dades(df_final)
+            
+            # Guardem l'èxit en sessió
+            st.session_state["ultim_moviment"] = msg_resum
+            
+            # BUIDEM LA CAIXA DE TEXT (Ara sí que funcionarà perquè estem dins un callback)
+            st.session_state.input_text_key = ""
+            
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+t1, t2 = st.tabs(["📝 Text", "📸 Foto"])
+
+with t1:
+    # Aquesta caixa de text està connectada a "input_text_key"
+    st.text_area(
+        "Descriu moviments:", 
+        key="input_text_key", 
+        height=100, 
+        placeholder="Ex: Sopar ahir al Viena 45 euros"
+    )
+    
+    # EL CANVI CLAU: Usem 'on_click'
+    st.button("Enviar Text", on_click=enviar_text_callback)
 
 with t2:
     im = st.file_uploader("Ticket", type=['jpg','png','jpeg'])
@@ -204,76 +256,40 @@ with t2:
         with st.spinner("Desglossant tiquet..."):
             img_p = Image.open(im)
             res = model.generate_content([prompt_comu, "Extreu tots els productes i preus:", img_p])
-            processar_i_pujar(res)
-
-# =================================================
-# 2. DASHBOARD
-# =================================================
-st.divider()
-
-# Avisos d'últim moviment (alternatiu al sidebar)
-if "ultim_moviment" in st.session_state:
-    st.info(f"🚀 Últims moviments afegits:\n{st.session_state['ultim_moviment']}")
-
-st.header("📊 Estat dels Comptes")
-
-col1, col2, col3, col4 = st.columns(4)
-ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
-desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
-saldo = df_filtrat['quantitat'].sum()
-
-# Càlcul de despeses fixes (periòdiques)
-desp_fixes = df_filtrat[(df_filtrat['es_periodic'] == True) & (df_filtrat['quantitat'] < 0)]['quantitat'].sum()
-
-col1.metric("🟢 Ingressos", f"{ingr:.2f} €")
-col2.metric("🔴 Despeses", f"{desp:.2f} €")
-col3.metric("🔄 Despeses Fixes", f"{desp_fixes:.2f} €")
-col4.metric("📊 Saldo", f"{saldo:.2f} €")
-
-if not df_filtrat.empty:
-    tab_g, tab_d = st.tabs(["📉 Gràfics", "✏️ Edició"])
-    
-    with tab_g:
-        c1, c2 = st.columns(2)
-        with c1:
-            df_g = df_filtrat.copy()
-            df_g['valor_abs'] = df_g['quantitat'].abs()
-            # Gràfic millorat amb Establiment si hi és
-            path_chart = ['tipus', 'categoria', 'establiment'] if 'establiment' in df_g.columns else ['tipus', 'categoria']
-            fig = px.sunburst(df_g, path=path_chart, values='valor_abs', 
-                              color='tipus', color_discrete_map={'Despesa':'#EF553B', 'Ingrés':'#00CC96'})
-            st.plotly_chart(fig, use_container_width=True)
-        with c2:
-            ev = df_filtrat.groupby('data')['quantitat'].sum().reset_index()
-            fig2 = px.bar(ev, x='data', y='quantitat', color='quantitat', 
-                          color_continuous_scale=px.colors.diverging.RdYlGn)
-            st.plotly_chart(fig2, use_container_width=True)
-
-    with tab_d:
-        st.caption("Doble clic per editar. Els tiquets desglossats tenen el mateix 'Grup ID'.")
-        
-        df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
-        
-        df_editat = st.data_editor(
-            df_per_editar,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                "quantitat": st.column_config.NumberColumn("€", format="%.2f €"),
-                "categoria": st.column_config.SelectboxColumn("Categoria", options=["Alimentació", "Llar", "Oci", "Cotxe", "Nòmina", "Restauració", "Extra", "Salut", "Educació", "Subscripcions"]),
-                "tipus": st.column_config.SelectboxColumn("Tipus", options=["Ingrés", "Despesa"]),
-                "es_periodic": st.column_config.CheckboxColumn("Periòdic?"),
-                "id_grup": st.column_config.TextColumn("Grup ID", disabled=True) # Només lectura per veure l'agrupació
-            },
-            key="editor_principal"
-        )
-        
-        if st.button("💾 Guardar Canvis Taula"):
-            with st.spinner("Guardant..."):
-                mask_fora = (df['data'] < inici) | (df['data'] > fi)
-                df_restant = df.loc[mask_fora]
-                df_final = pd.concat([df_restant, df_editat], ignore_index=True)
+            # Per la foto, podem reutilitzar la lògica antiga o adaptar-la, 
+            # però com que el file_uploader es neteja diferent, ho deixem com estava per simplificar
+            # (Aquí hauríem de copiar la lògica de processament de dalt, però sense el callback de text)
+            # Per no duplicar codi, l'ideal seria tenir una funció "core_processar(json)" 
+            # però per arreglar el teu error ràpid, deixem la foto com estava:
+            
+            # ... (Copia aquí la lògica de processament de la foto anterior, sense tocar session_state de text)
+            txt = res.text.replace("```json", "").replace("```", "").strip()
+            try:
+                dades = json.loads(txt)
+                if isinstance(dades, dict): dades = [dades]
+                noves = []
+                grup_id_unic = str(uuid.uuid4())[:8] 
+                msg_resum = ""
+                for item in dades:
+                    # ... (mateixa lògica d'abans) ...
+                    data_f = item.get('data')
+                    if not data_f or data_f == "AVUI": data_f = date.today()
+                    noves.append({
+                        "data": data_f,
+                        "concepte": item.get('concepte', 'Varies'),
+                        "establiment": item.get('establiment', ''),
+                        "quantitat": item.get('quantitat', 0),
+                        "categoria": item.get('categoria', 'Altres'),
+                        "tipus": item.get('tipus', 'Despesa'),
+                        "es_periodic": item.get('es_periodic', False),
+                        "id_grup": grup_id_unic
+                    })
+                    msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
+                
+                df_act = carregar_dades()
+                df_final = pd.concat([df_act, pd.DataFrame(noves)], ignore_index=True)
                 guardar_dades(df_final)
-                st.success("Fet!")
+                st.session_state["ultim_moviment"] = msg_resum
                 st.rerun()
+            except Exception as e:
+                st.error(f"Error foto: {e}")
