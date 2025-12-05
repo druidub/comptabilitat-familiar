@@ -38,27 +38,49 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('models/gemini-2.5-flash')
 
-# --- FUNCIONS ---
+# --- FUNCIONS (VERSIÓ A PROVA DE BALES) ---
 def carregar_dades():
+    # Llegim sense caché
     df = conn.read(ttl=0)
+    
+    # Definim columnes obligatòries
     columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "es_periodic", "id_grup"]
     
+    # Si està buit, retornem estructura buida
     if df.empty:
         return pd.DataFrame(columns=columnes_base)
     
+    # Assegurem que totes les columnes existeixen
     for col in columnes_base:
         if col not in df.columns:
             df[col] = ""
 
-    df['establiment'] = df['establiment'].fillna("")
-    df['concepte'] = df['concepte'].fillna("")
-    df['categoria'] = df['categoria'].fillna("Altres")
-    df['tipus'] = df['tipus'].fillna("Despesa")
-    df['es_periodic'] = df['es_periodic'].fillna(False).infer_objects(copy=False)
-    df['id_grup'] = df['id_grup'].fillna("")
+    # NETEJA AGRESSIVA DE DADES (Per evitar errors a la taula)
     
-    df['data'] = pd.to_datetime(df['data'], errors='coerce').dt.date
-    df = df.dropna(subset=['quantitat'])
+    # 1. Dates: Convertim a datetime i si falla posa NaT (Not a Time)
+    df['data'] = pd.to_datetime(df['data'], errors='coerce')
+    
+    # 2. Quantitat: Convertim a numèric, si falla posa NaN
+    df['quantitat'] = pd.to_numeric(df['quantitat'], errors='coerce')
+    
+    # 3. Eliminem files que no tinguin data o quantitat (són errors o files buides)
+    df = df.dropna(subset=['data', 'quantitat'])
+    
+    # 4. Ara que estem segurs que són dates, convertim a objecte 'date' (sense hores)
+    df['data'] = df['data'].dt.date
+    
+    # 5. Textos: Omplim buits amb strings buits
+    df['establiment'] = df['establiment'].fillna("").astype(str)
+    df['concepte'] = df['concepte'].fillna("").astype(str)
+    df['categoria'] = df['categoria'].fillna("Altres").astype(str)
+    df['tipus'] = df['tipus'].fillna("Despesa").astype(str)
+    df['id_grup'] = df['id_grup'].fillna("").astype(str)
+    
+    # 6. Booleans (Periòdic): Assegurem que sigui True/False
+    # Google Sheets a vegades torna "TRUE" com a text, això ho arregla
+    df['es_periodic'] = df['es_periodic'].astype(str).map({'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}).fillna(False)
+    df['es_periodic'] = df['es_periodic'].astype(bool)
+
     return df
 
 def guardar_dades(df_nou):
@@ -133,12 +155,11 @@ Estructura:
 Si és un tiquet de supermercat amb molts items, separa'ls.
 """
 
-# --- CALLBACK PER AL TEXT (SOLUCIÓ ERROR VERMELL) ---
+# --- CALLBACK PER AL TEXT ---
 def enviar_text_callback():
     text_a_processar = st.session_state.input_text_key
     
     if text_a_processar:
-        # Cridem a la IA (sense spinner aquí perquè és un callback, però és ràpid)
         res = model.generate_content([prompt_comu, text_a_processar])
         
         txt = res.text.replace("```json", "").replace("```", "").strip()
@@ -175,7 +196,7 @@ def enviar_text_callback():
             
             st.session_state["ultim_moviment"] = msg_resum
             
-            # AQUESTA ÉS LA CLAU: Buidem la caixa DINS del callback
+            # Buidem la caixa
             st.session_state.input_text_key = ""
             
         except Exception as e:
@@ -190,7 +211,6 @@ with t1:
         height=100, 
         placeholder="Ex: Sopar ahir al Viena 45 euros"
     )
-    # Botó amb Callback
     st.button("Enviar Text", on_click=enviar_text_callback)
 
 with t2:
@@ -200,7 +220,6 @@ with t2:
             img_p = Image.open(im)
             res = model.generate_content([prompt_comu, "Extreu tots els productes i preus:", img_p])
             
-            # Lògica foto (sense callback perquè file_uploader és diferent)
             txt = res.text.replace("```json", "").replace("```", "").strip()
             try:
                 dades = json.loads(txt)
@@ -232,7 +251,7 @@ with t2:
                 st.error(f"Error foto: {e}")
 
 # =================================================
-# 2. DASHBOARD (AQUESTA PART ÉS LA QUE T'HAVIA DESAPAREGUT)
+# 2. DASHBOARD
 # =================================================
 st.divider()
 
@@ -241,12 +260,16 @@ if "ultim_moviment" in st.session_state:
 
 st.header("📊 Estat dels Comptes")
 
-col1, col2, col3, col4 = st.columns(4)
-ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
-desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
-saldo = df_filtrat['quantitat'].sum()
-desp_fixes = df_filtrat[(df_filtrat['es_periodic'] == True) & (df_filtrat['quantitat'] < 0)]['quantitat'].sum()
+# Càlculs segurs
+if not df_filtrat.empty:
+    ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
+    desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
+    saldo = df_filtrat['quantitat'].sum()
+    desp_fixes = df_filtrat[(df_filtrat['es_periodic'] == True) & (df_filtrat['quantitat'] < 0)]['quantitat'].sum()
+else:
+    ingr, desp, saldo, desp_fixes = 0.0, 0.0, 0.0, 0.0
 
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("🟢 Ingressos", f"{ingr:.2f} €")
 col2.metric("🔴 Despeses", f"{desp:.2f} €")
 col3.metric("🔄 Despeses Fixes", f"{desp_fixes:.2f} €")
@@ -261,15 +284,19 @@ if not df_filtrat.empty:
             df_g = df_filtrat.copy()
             df_g['valor_abs'] = df_g['quantitat'].abs()
             path_chart = ['tipus', 'categoria', 'establiment'] if 'establiment' in df_g.columns else ['tipus', 'categoria']
-            if not df_g.empty:
+            # Evitem error si no hi ha dades per mostrar
+            if not df_g.empty and df_g['valor_abs'].sum() > 0:
                 fig = px.sunburst(df_g, path=path_chart, values='valor_abs', 
                                 color='tipus', color_discrete_map={'Despesa':'#EF553B', 'Ingrés':'#00CC96'})
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hi ha dades per mostrar gràfics.")
         with c2:
             ev = df_filtrat.groupby('data')['quantitat'].sum().reset_index()
-            fig2 = px.bar(ev, x='data', y='quantitat', color='quantitat', 
-                          color_continuous_scale=px.colors.diverging.RdYlGn)
-            st.plotly_chart(fig2, use_container_width=True)
+            if not ev.empty:
+                fig2 = px.bar(ev, x='data', y='quantitat', color='quantitat', 
+                              color_continuous_scale=px.colors.diverging.RdYlGn)
+                st.plotly_chart(fig2, use_container_width=True)
 
     with tab_d:
         st.caption("Doble clic per editar. Els tiquets desglossats tenen el mateix 'Grup ID'.")
