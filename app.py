@@ -36,7 +36,7 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('models/gemini-2.5-flash')
+model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # --- FUNCIONS (VERSIÓ A PROVA DE BALES) ---
 def carregar_dades():
@@ -215,40 +215,58 @@ with t1:
 
 with t2:
     im = st.file_uploader("Ticket", type=['jpg','png','jpeg'])
+    
     if st.button("Processar Foto") and im:
-        with st.spinner("Desglossant tiquet..."):
-            img_p = Image.open(im)
-            res = model.generate_content([prompt_comu, "Extreu tots els productes i preus:", img_p])
-            
-            txt = res.text.replace("```json", "").replace("```", "").strip()
+        with st.spinner("Desglossant tiquet... (Això pot trigar una mica)"):
             try:
+                img_p = Image.open(im)
+                
+                # Aquesta és la línia que fallava. Ara està protegida dins el try
+                res = model.generate_content([prompt_comu, "Extreu tots els productes i preus:", img_p])
+                
+                txt = res.text.replace("```json", "").replace("```", "").strip()
+                
+                # Processament del JSON
                 dades = json.loads(txt)
                 if isinstance(dades, dict): dades = [dades]
+                
                 noves = []
                 grup_id_unic = str(uuid.uuid4())[:8] 
                 msg_resum = ""
+                
                 for item in dades:
                     data_f = item.get('data')
                     if not data_f or data_f == "AVUI": data_f = date.today()
+                    
+                    concepte = item.get('concepte', 'Varies')
+                    quantitat = item.get('quantitat', 0)
+                    
                     noves.append({
                         "data": data_f,
-                        "concepte": item.get('concepte', 'Varies'),
+                        "concepte": concepte,
                         "establiment": item.get('establiment', ''),
-                        "quantitat": item.get('quantitat', 0),
+                        "quantitat": quantitat,
                         "categoria": item.get('categoria', 'Altres'),
                         "tipus": item.get('tipus', 'Despesa'),
                         "es_periodic": item.get('es_periodic', False),
                         "id_grup": grup_id_unic
                     })
-                    msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
+                    msg_resum += f"- {concepte}: {quantitat}€\n"
                 
                 df_act = carregar_dades()
                 df_final = pd.concat([df_act, pd.DataFrame(noves)], ignore_index=True)
                 guardar_dades(df_final)
+                
                 st.session_state["ultim_moviment"] = msg_resum
                 st.rerun()
+
             except Exception as e:
-                st.error(f"Error foto: {e}")
+                # GESTIÓ D'ERRORS INTEL·LIGENT
+                error_msg = str(e)
+                if "ResourceExhausted" in error_msg or "429" in error_msg:
+                    st.warning("🐢 La IA està descansant (Límit de quota). Espera 30 segons i torna a provar-ho!")
+                else:
+                    st.error(f"Error processant la foto: {e}")
 
 # =================================================
 # 2. DASHBOARD
