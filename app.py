@@ -36,7 +36,7 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('models/gemini-1.5-flash')
+model = genai.GenerativeModel('models/gemini-3-flash-preview')
 
 # --- FUNCIONS (VERSIÓ A PROVA DE BALES) ---
 def carregar_dades():
