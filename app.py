@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA ---
-st.set_page_config(page_title="Comptabilitat Familiar v1.3", page_icon="icona.svg", layout="wide")
+st.set_page_config(page_title="Comptabilitat Familiar v1.4", page_icon="icona.svg", layout="wide")
 
 # --- 🔒 SISTEMA DE SEGURETAT ---
 def check_password():
@@ -35,114 +35,124 @@ if not check_password():
 # --- CONNEXIONS ---
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
-# Canvia a 'gemini-1.5-flash' o el que estiguis usant si '3-flash-preview' et dona problemes puntuals
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('models/gemini-3-flash-preview') 
 
-# --- FUNCIONS ---
+# --- FUNCIONS DE DADES ---
 def carregar_dades():
+    # Full 1: Moviments (per defecte agafa el primer full)
     df = conn.read(ttl=0)
-    # Afegim columna nova per gestionar recurrents (opcional, però útil per saber origen)
     columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "es_periodic", "id_grup"]
     
     if df.empty:
-        return pd.DataFrame(columns=columnes_base)
+        df = pd.DataFrame(columns=columnes_base)
     
+    # Assegurar columnes
     for col in columnes_base:
         if col not in df.columns:
             df[col] = ""
 
-    # NETEJA DE DADES
+    # Neteja de tipus
     df['data'] = pd.to_datetime(df['data'], errors='coerce')
     df['quantitat'] = pd.to_numeric(df['quantitat'], errors='coerce')
     df = df.dropna(subset=['data', 'quantitat'])
     df['data'] = df['data'].dt.date
     
-    df['establiment'] = df['establiment'].fillna("").astype(str)
-    df['concepte'] = df['concepte'].fillna("").astype(str)
-    df['categoria'] = df['categoria'].fillna("Altres").astype(str)
-    df['tipus'] = df['tipus'].fillna("Despesa").astype(str)
-    df['id_grup'] = df['id_grup'].fillna("").astype(str)
+    # Strings
+    cols_str = ['establiment', 'concepte', 'categoria', 'tipus', 'id_grup']
+    for c in cols_str:
+        df[c] = df[c].fillna("").astype(str)
     
-    # Normalitzem es_periodic
+    # Booleans
     df['es_periodic'] = df['es_periodic'].astype(str).map({'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}).fillna(False)
     df['es_periodic'] = df['es_periodic'].astype(bool)
 
     return df
 
+def carregar_recurrents():
+    # Full 2: Configuració de Recurrents (Busca el full pel nom)
+    try:
+        df_rec = conn.read(worksheet="Recurrents", ttl=0)
+        # Si està buit o no té columnes, creem estructura
+        if df_rec.empty or 'concepte' not in df_rec.columns:
+            return pd.DataFrame(columns=["concepte", "quantitat", "categoria", "tipus", "dia"])
+        return df_rec
+    except Exception:
+        # Si falla (p.ex. no existeix el full), retornem buit per no petar
+        st.error("⚠️ No trobo la pestanya 'Recurrents' al Google Sheet. Crea-la amb les columnes: concepte, quantitat, categoria, tipus, dia")
+        return pd.DataFrame(columns=["concepte", "quantitat", "categoria", "tipus", "dia"])
+
 def guardar_dades(df_nou):
-    conn.update(data=df_nou)
+    conn.update(data=df_nou) # Actualitza el full 1 per defecte
 
-# --- GESTIÓ DE RECURRENTS ---
-# Aquesta funció defineix els teus moviments fixos. 
-# IDEALMENT: En el futur això podria estar en un altre full de càlcul, però per ara ho posem al codi per simplicitat.
-def obtenir_configuracio_recurrents():
-    # Format: Concepte, Quantitat, Categoria, Tipus, Dia del mes (1-31)
-    # Afegeix/Modifica aquí els teus fixos:
-    return [
-        {"concepte": "Lloguer Pis", "quantitat": -800.00, "categoria": "Llar", "tipus": "Despesa", "dia": 5},
-        {"concepte": "Netflix", "quantitat": -12.99, "categoria": "Subscripcions", "tipus": "Despesa", "dia": 15},
-        {"concepte": "Spotify", "quantitat": -10.99, "categoria": "Subscripcions", "tipus": "Despesa", "dia": 25},
-        {"concepte": "Nòmina", "quantitat": 1800.00, "categoria": "Nòmina", "tipus": "Ingrés", "dia": 1},
-        {"concepte": "Gimnàs", "quantitat": -35.00, "categoria": "Salut", "tipus": "Despesa", "dia": 1}
-    ]
+def guardar_recurrents(df_rec_nou):
+    conn.update(worksheet="Recurrents", data=df_rec_nou)
 
-def comprovar_recurrents_pendents(df_actual):
+# --- LÒGICA AUTOMÀTICA ---
+def comprovar_recurrents_pendents(df_actual, df_config):
+    if df_config.empty:
+        return []
+
     avui = date.today()
     mes_actual = avui.month
     any_actual = avui.year
     
-    recurrents_config = obtenir_configuracio_recurrents()
     moviments_a_afegir = []
     
-    for rec in recurrents_config:
-        # Calculem la data que li tocaria aquest mes
-        try:
-            data_tocaria = date(any_actual, mes_actual, rec['dia'])
-        except ValueError:
-            # Per si el mes no té dia 31, agafem l'últim
-            data_tocaria = date(any_actual, mes_actual, 1) + timedelta(days=32)
-            data_tocaria = data_tocaria.replace(day=1) - timedelta(days=1)
+    # Convertim el df de config a llista de diccionaris per iterar fàcil
+    recurrents_list = df_config.to_dict('records')
 
-        # Si avui és igual o posterior al dia que toca...
-        if avui >= data_tocaria:
-            # Comprovem si JA existeix al full de càlcul per aquest mes i concepte
-            # Filtrem per mes, any i concepte exacte
-            duplicat = df_actual[
-                (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
-                (df_actual['data'].apply(lambda x: x.year) == any_actual) &
-                (df_actual['concepte'] == rec['concepte']) &
-                (abs(df_actual['quantitat'] - rec['quantitat']) < 0.01) # Mateixa quantitat
-            ]
+    for rec in recurrents_list:
+        try:
+            dia_fix = int(rec['dia'])
+            # Calculem data teòrica d'aquest mes
+            try:
+                data_tocaria = date(any_actual, mes_actual, dia_fix)
+            except ValueError:
+                # Gestió de final de mes (ex: dia 31 en mes de 30)
+                data_tocaria = date(any_actual, mes_actual, 1) + timedelta(days=32)
+                data_tocaria = data_tocaria.replace(day=1) - timedelta(days=1)
             
-            if duplicat.empty:
-                # No existeix, l'hem de proposar
-                moviments_a_afegir.append({
-                    "data": data_tocaria, # Posem la data teòrica (dia 5), no avui
-                    "concepte": rec['concepte'],
-                    "establiment": "Recurrent",
-                    "quantitat": rec['quantitat'],
-                    "categoria": rec['categoria'],
-                    "tipus": rec['tipus'],
-                    "es_periodic": True,
-                    "id_grup": "AUTO_" + str(uuid.uuid4())[:8]
-                })
-    
+            # Si ja ha passat el dia...
+            if avui >= data_tocaria:
+                # Mirem si ja està pagat (busquem duplicats)
+                duplicat = df_actual[
+                    (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
+                    (df_actual['data'].apply(lambda x: x.year) == any_actual) &
+                    (df_actual['concepte'] == rec['concepte']) &
+                    (abs(df_actual['quantitat'] - rec['quantitat']) < 0.01)
+                ]
+                
+                if duplicat.empty:
+                    moviments_a_afegir.append({
+                        "data": data_tocaria,
+                        "concepte": rec['concepte'],
+                        "establiment": "Recurrent Automàtic",
+                        "quantitat": rec['quantitat'],
+                        "categoria": rec['categoria'],
+                        "tipus": rec['tipus'],
+                        "es_periodic": True,
+                        "id_grup": "AUTO_" + str(uuid.uuid4())[:8]
+                    })
+        except Exception:
+            continue
+            
     return moviments_a_afegir
 
+# Carreguem dades
 df = carregar_dades()
+df_recurrents_config = carregar_recurrents()
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (BOTÓ RECUPERAT!) ---
 with st.sidebar:
     st.image("icona.svg", width=50)
     st.header("Menú")
     
-    # 1. Comprovació Automàtica de Recurrents
-    pendents = comprovar_recurrents_pendents(df)
+    # 1. Comprovació Automàtica
+    pendents = comprovar_recurrents_pendents(df, df_recurrents_config)
     if pendents:
         st.warning(f"🔔 {len(pendents)} Moviments Fixos pendents!")
         with st.expander("Veure i Aprovar"):
-            st.write("Aquest mes falten:")
             for p in pendents:
                 st.caption(f"{p['data']}: {p['concepte']} ({p['quantitat']}€)")
             
@@ -166,11 +176,17 @@ with st.sidebar:
             
     st.divider()
     
-    # FILTRES
+    # 2. BOTÓ DE TANCAR SESSIÓ (RECUPERAT!)
+    if st.button("🔒 Tancar Sessió"):
+        st.session_state["password_correct"] = False
+        st.rerun()
+
+    st.divider()
+    
+    # 3. Filtres
     st.subheader("📅 Filtre de Dades")
     opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Últims 7 dies", "Tot l'any", "Personalitzat"])
     avui = date.today()
-    
     if opcio_data == "Aquest Mes":
         inici = avui.replace(day=1)
         fi = avui
@@ -188,7 +204,6 @@ with st.sidebar:
         inici = avui - timedelta(days=7)
         fi = avui
 
-# --- LÒGICA DE FILTRATGE ---
 if not df.empty:
     mask = (df['data'] >= inici) & (df['data'] <= fi)
     df_filtrat = df.loc[mask]
@@ -196,75 +211,60 @@ else:
     df_filtrat = df
 
 # =================================================
-# 1. ZONA D'AFEGIR
+# 1. ZONA PRINCIPAL
 # =================================================
 st.title("➕ Afegir Moviment")
 
 prompt_comu = f"""
 AVUI ÉS: {date.today()}.
-Analitza la informació. Si l'usuari diu "ahir" o dates relatives, calcula la data exacta basant-te en que avui és {date.today()}.
-Retorna una LLISTA de JSONs.
-Estructura: 'data' (YYYY-MM-DD), 'concepte' (Català), 'establiment', 'quantitat' (Negatiu=Despesa), 'categoria', 'tipus', 'es_periodic' (bool).
-Si és tiquet llarg, separa items.
+Analitza la informació. Si l'usuari diu "ahir", calcula data.
+Retorna LLISTA de JSONs: 'data' (YYYY-MM-DD), 'concepte', 'establiment', 'quantitat' (Negatiu=Despesa), 'categoria', 'tipus', 'es_periodic' (bool).
 """
 
-# --- CALLBACK PER AL TEXT (AMB PROTECCIÓ D'ERROR) ---
 def enviar_text_callback():
     text_a_processar = st.session_state.input_text_key
-    
     if text_a_processar:
         try:
             res = model.generate_content([prompt_comu, text_a_processar])
-            
-            # PROTECCIÓ CONTRA RESPOSTES BUIDES/BLOQUEJADES
             if not res.parts:
-                st.warning("⚠️ La IA no ha retornat text. Potser ha detectat contingut insegur o està saturada. Torna-ho a provar.")
+                st.warning("⚠️ Resposta buida de la IA. Torna-ho a provar.")
                 return
-
             txt = res.text.replace("```json", "").replace("```", "").strip()
-            
             dades = json.loads(txt)
             if isinstance(dades, dict): dades = [dades]
             
             noves = []
             grup_id_unic = str(uuid.uuid4())[:8] 
             msg_resum = ""
-
             for item in dades:
                 data_f = item.get('data')
                 if not data_f or data_f == "AVUI": data_f = date.today()
                 
                 concepte = item.get('concepte', 'Varies')
-                quantitat = item.get('quantitat', 0)
-                
                 noves.append({
                     "data": data_f,
                     "concepte": concepte,
                     "establiment": item.get('establiment', ''),
-                    "quantitat": quantitat,
+                    "quantitat": item.get('quantitat', 0),
                     "categoria": item.get('categoria', 'Altres'),
                     "tipus": item.get('tipus', 'Despesa'),
                     "es_periodic": item.get('es_periodic', False),
                     "id_grup": grup_id_unic
                 })
-                msg_resum += f"- {concepte}: {quantitat}€\n"
+                msg_resum += f"- {concepte}: {item.get('quantitat')}€\n"
             
             df_act = carregar_dades()
             df_final = pd.concat([df_act, pd.DataFrame(noves)], ignore_index=True)
             guardar_dades(df_final)
-            
             st.session_state["ultim_moviment"] = msg_resum
             st.session_state.input_text_key = ""
-            
-        except ValueError:
-             st.error("🤖 La IA ha bloquejat la resposta o ha fallat. Prova de reformular la frase.")
         except Exception as e:
-            st.error(f"Error tècnic: {e}")
+            st.error(f"Error: {e}")
 
 t1, t2, t3 = st.tabs(["📝 Text", "📸 Foto", "⚙️ Configurar Recurrents"])
 
 with t1:
-    st.text_area("Descriu moviments:", key="input_text_key", height=100, placeholder="Ex: Sopar ahir al Viena 45 euros")
+    st.text_area("Descriu moviments:", key="input_text_key", height=100)
     st.button("Enviar Text", on_click=enviar_text_callback)
 
 with t2:
@@ -274,10 +274,8 @@ with t2:
             try:
                 img_p = Image.open(im)
                 res = model.generate_content([prompt_comu, "Extreu productes:", img_p])
-                
-                # PROTECCIÓ FOTO
                 if not res.parts:
-                    st.error("⚠️ No s'ha pogut llegir el tiquet (bloqueig de seguretat o error).")
+                    st.error("⚠️ Error llegint imatge.")
                 else:
                     txt = res.text.replace("```json", "").replace("```", "").strip()
                     dades = json.loads(txt)
@@ -309,14 +307,29 @@ with t2:
                 st.error(f"Error foto: {e}")
 
 with t3:
-    st.info("ℹ️ Per afegir nous recurrents, has d'editar la funció `obtenir_configuracio_recurrents` al fitxer `app.py`. En futures versions ho farem des d'aquí!")
-    st.code("""
-    # Exemple del codi que pots editar:
-    {"concepte": "Lloguer", "quantitat": -800.00, "dia": 5},
-    {"concepte": "Netflix", "quantitat": -12.99, "dia": 15},
-    """, language="python")
-    st.write("Llistat actual configurat al codi:")
-    st.table(pd.DataFrame(obtenir_configuracio_recurrents()))
+    st.subheader("Gestió de Pagaments Fixos")
+    st.write("Edita aquí la llista. Quan guardis, s'actualitzarà al Google Sheet (pestanya 'Recurrents').")
+    
+    # EDITOR DE LA CONFIGURACIÓ
+    df_config_editat = st.data_editor(
+        df_recurrents_config,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "concepte": st.column_config.TextColumn("Concepte (Ex: Lloguer)", required=True),
+            "quantitat": st.column_config.NumberColumn("Quantitat (€)", required=True, format="%.2f €"),
+            "categoria": st.column_config.SelectboxColumn("Categoria", options=["Llar", "Subscripcions", "Nòmina", "Salut", "Educació", "Cotxe", "Altres"], required=True),
+            "tipus": st.column_config.SelectboxColumn("Tipus", options=["Despesa", "Ingrés"], required=True),
+            "dia": st.column_config.NumberColumn("Dia del mes (1-31)", min_value=1, max_value=31, step=1, required=True)
+        },
+        key="editor_recurrents"
+    )
+    
+    if st.button("💾 Guardar Configuració Recurrents"):
+        with st.spinner("Actualitzant Google Sheets..."):
+            guardar_recurrents(df_config_editat)
+            st.success("Configuració actualitzada! L'app farà servir aquests nous valors.")
+            st.rerun()
 
 # =================================================
 # 2. DASHBOARD
@@ -331,7 +344,6 @@ if not df_filtrat.empty:
     ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
     desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
     saldo = df_filtrat['quantitat'].sum()
-    # Despeses fixes reals (marcades al full)
     desp_fixes = df_filtrat[(df_filtrat['es_periodic'] == True) & (df_filtrat['quantitat'] < 0)]['quantitat'].sum()
 else:
     ingr, desp, saldo, desp_fixes = 0.0, 0.0, 0.0, 0.0
@@ -339,11 +351,11 @@ else:
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("🟢 Ingressos", f"{ingr:.2f} €")
 col2.metric("🔴 Despeses", f"{desp:.2f} €")
-col3.metric("🔄 Despeses Fixes (Reals)", f"{desp_fixes:.2f} €")
+col3.metric("🔄 Despeses Fixes", f"{desp_fixes:.2f} €")
 col4.metric("📊 Saldo", f"{saldo:.2f} €")
 
 if not df_filtrat.empty:
-    tab_g, tab_d = st.tabs(["📉 Gràfics", "✏️ Edició"])
+    tab_g, tab_d = st.tabs(["📉 Gràfics", "✏️ Edició Moviments"])
     with tab_g:
         c1, c2 = st.columns(2)
         with c1:
@@ -359,6 +371,7 @@ if not df_filtrat.empty:
                 fig2 = px.bar(ev, x='data', y='quantitat', color='quantitat', color_continuous_scale=px.colors.diverging.RdYlGn)
                 st.plotly_chart(fig2, use_container_width=True)
     with tab_d:
+        st.write("Edició de moviments ja realitzats (Full 1):")
         df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
         df_editat = st.data_editor(
             df_per_editar,
@@ -374,7 +387,7 @@ if not df_filtrat.empty:
             },
             key="editor_principal"
         )
-        if st.button("💾 Guardar Canvis Taula"):
+        if st.button("💾 Guardar Canvis Moviments"):
             with st.spinner("Guardant..."):
                 mask_fora = (df['data'] < inici) | (df['data'] > fi)
                 df_restant = df.loc[mask_fora]
