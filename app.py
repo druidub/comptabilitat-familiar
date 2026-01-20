@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA ---
-st.set_page_config(page_title="Comptabilitat Familiar v1.4", page_icon="icona.svg", layout="wide")
+st.set_page_config(page_title="Comptabilitat Familiar v1.5", page_icon="icona.svg", layout="wide")
 
 # --- 🔒 SISTEMA DE SEGURETAT ---
 def check_password():
@@ -40,55 +40,47 @@ model = genai.GenerativeModel('models/gemini-3-flash-preview')
 
 # --- FUNCIONS DE DADES ---
 def carregar_dades():
-    # Full 1: Moviments (per defecte agafa el primer full)
     df = conn.read(ttl=0)
     columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "es_periodic", "id_grup"]
     
     if df.empty:
         df = pd.DataFrame(columns=columnes_base)
     
-    # Assegurar columnes
     for col in columnes_base:
         if col not in df.columns:
             df[col] = ""
 
-    # Neteja de tipus
     df['data'] = pd.to_datetime(df['data'], errors='coerce')
     df['quantitat'] = pd.to_numeric(df['quantitat'], errors='coerce')
     df = df.dropna(subset=['data', 'quantitat'])
     df['data'] = df['data'].dt.date
     
-    # Strings
     cols_str = ['establiment', 'concepte', 'categoria', 'tipus', 'id_grup']
     for c in cols_str:
         df[c] = df[c].fillna("").astype(str)
     
-    # Booleans
     df['es_periodic'] = df['es_periodic'].astype(str).map({'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}).fillna(False)
     df['es_periodic'] = df['es_periodic'].astype(bool)
 
     return df
 
 def carregar_recurrents():
-    # Full 2: Configuració de Recurrents (Busca el full pel nom)
     try:
         df_rec = conn.read(worksheet="Recurrents", ttl=0)
-        # Si està buit o no té columnes, creem estructura
         if df_rec.empty or 'concepte' not in df_rec.columns:
             return pd.DataFrame(columns=["concepte", "quantitat", "categoria", "tipus", "dia"])
         return df_rec
     except Exception:
-        # Si falla (p.ex. no existeix el full), retornem buit per no petar
-        st.error("⚠️ No trobo la pestanya 'Recurrents' al Google Sheet. Crea-la amb les columnes: concepte, quantitat, categoria, tipus, dia")
+        st.error("⚠️ No trobo la pestanya 'Recurrents'.")
         return pd.DataFrame(columns=["concepte", "quantitat", "categoria", "tipus", "dia"])
 
 def guardar_dades(df_nou):
-    conn.update(data=df_nou) # Actualitza el full 1 per defecte
+    conn.update(data=df_nou)
 
 def guardar_recurrents(df_rec_nou):
     conn.update(worksheet="Recurrents", data=df_rec_nou)
 
-# --- LÒGICA AUTOMÀTICA ---
+# --- LÒGICA AUTOMÀTICA MILLORADA ---
 def comprovar_recurrents_pendents(df_actual, df_config):
     if df_config.empty:
         return []
@@ -99,23 +91,19 @@ def comprovar_recurrents_pendents(df_actual, df_config):
     
     moviments_a_afegir = []
     
-    # Convertim el df de config a llista de diccionaris per iterar fàcil
     recurrents_list = df_config.to_dict('records')
 
     for rec in recurrents_list:
         try:
             dia_fix = int(rec['dia'])
-            # Calculem data teòrica d'aquest mes
             try:
                 data_tocaria = date(any_actual, mes_actual, dia_fix)
             except ValueError:
-                # Gestió de final de mes (ex: dia 31 en mes de 30)
                 data_tocaria = date(any_actual, mes_actual, 1) + timedelta(days=32)
                 data_tocaria = data_tocaria.replace(day=1) - timedelta(days=1)
             
-            # Si ja ha passat el dia...
             if avui >= data_tocaria:
-                # Mirem si ja està pagat (busquem duplicats)
+                # 1. Mirem si ja està pagat normal (duplicat exacte)
                 duplicat = df_actual[
                     (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
                     (df_actual['data'].apply(lambda x: x.year) == any_actual) &
@@ -123,7 +111,15 @@ def comprovar_recurrents_pendents(df_actual, df_config):
                     (abs(df_actual['quantitat'] - rec['quantitat']) < 0.01)
                 ]
                 
-                if duplicat.empty:
+                # 2. Mirem si està MARCAT COM A SALTAT (Concepte comença per SALTAT:)
+                saltat = df_actual[
+                    (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
+                    (df_actual['data'].apply(lambda x: x.year) == any_actual) &
+                    (df_actual['concepte'] == f"SALTAT: {rec['concepte']}")
+                ]
+                
+                # Si no està ni pagat ni saltat, el proposem
+                if duplicat.empty and saltat.empty:
                     moviments_a_afegir.append({
                         "data": data_tocaria,
                         "concepte": rec['concepte'],
@@ -132,36 +128,88 @@ def comprovar_recurrents_pendents(df_actual, df_config):
                         "categoria": rec['categoria'],
                         "tipus": rec['tipus'],
                         "es_periodic": True,
-                        "id_grup": "AUTO_" + str(uuid.uuid4())[:8]
+                        "Acció": "Afegir" # Per defecte afegim
                     })
         except Exception:
             continue
             
     return moviments_a_afegir
 
-# Carreguem dades
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
 
-# --- BARRA LATERAL (BOTÓ RECUPERAT!) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.image("icona.svg", width=50)
     st.header("Menú")
     
     # 1. Comprovació Automàtica
     pendents = comprovar_recurrents_pendents(df, df_recurrents_config)
+    
     if pendents:
-        st.warning(f"🔔 {len(pendents)} Moviments Fixos pendents!")
-        with st.expander("Veure i Aprovar"):
-            for p in pendents:
-                st.caption(f"{p['data']}: {p['concepte']} ({p['quantitat']}€)")
+        st.warning(f"🔔 {len(pendents)} Moviments Fixos pendents")
+        with st.expander("Gestionar Avisos", expanded=True):
+            # Creem un DataFrame temporal per editar l'acció
+            df_pendents = pd.DataFrame(pendents)
             
-            if st.button("✅ Afegir-los tots ara"):
-                df_nous = pd.DataFrame(pendents)
-                df_final = pd.concat([df, df_nous], ignore_index=True)
-                guardar_dades(df_final)
-                st.success("Afegits correctament!")
-                st.rerun()
+            # Editor per triar què fer amb cada un
+            editat_pendents = st.data_editor(
+                df_pendents,
+                column_config={
+                    "Acció": st.column_config.SelectboxColumn(
+                        "Què vols fer?",
+                        help="Tria 'Afegir' per guardar-lo o 'Saltar' per descartar-lo aquest mes",
+                        width="medium",
+                        options=[
+                            "Afegir",
+                            "Saltar (Ignorar)",
+                            "Deixar Pendent"
+                        ],
+                        required=True
+                    ),
+                    "concepte": st.column_config.TextColumn("Concepte", disabled=True),
+                    "quantitat": st.column_config.NumberColumn("€", format="%.2f €", disabled=True),
+                    "data": None, "establiment": None, "categoria": None, "tipus": None, "es_periodic": None, "id_grup": None # Amaguem columnes tècniques
+                },
+                hide_index=True,
+                key="editor_accions_sidebar"
+            )
+            
+            if st.button("🚀 Processar Selecció"):
+                noves_files = []
+                missatge = ""
+                
+                for index, row in editat_pendents.iterrows():
+                    accio = row['Acció']
+                    
+                    if accio == "Afegir":
+                        # Afegim el moviment normal
+                        del row['Acció'] # Netegem columna auxiliar
+                        row['id_grup'] = "AUTO_" + str(uuid.uuid4())[:8]
+                        noves_files.append(row)
+                        missatge += f"✅ Afegit: {row['concepte']}\n"
+                        
+                    elif accio == "Saltar (Ignorar)":
+                        # Afegim un moviment "fals" de 0€ per fer callar l'avís
+                        noves_files.append({
+                            "data": row['data'],
+                            "concepte": f"SALTAT: {row['concepte']}",
+                            "establiment": "Sistema",
+                            "quantitat": 0.0,
+                            "categoria": row['categoria'],
+                            "tipus": row['tipus'],
+                            "es_periodic": False,
+                            "id_grup": "SKIP_" + str(uuid.uuid4())[:8]
+                        })
+                        missatge += f"🗑️ Saltat: {row['concepte']}\n"
+                
+                if noves_files:
+                    df_final = pd.concat([df, pd.DataFrame(noves_files)], ignore_index=True)
+                    guardar_dades(df_final)
+                    st.success("Fet!")
+                    if missatge: st.caption(missatge)
+                    st.rerun()
+
     else:
         st.success("✅ Tot al dia (recurrents)")
 
@@ -175,15 +223,10 @@ with st.sidebar:
             st.rerun()
             
     st.divider()
-    
-    # 2. BOTÓ DE TANCAR SESSIÓ (RECUPERAT!)
     if st.button("🔒 Tancar Sessió"):
         st.session_state["password_correct"] = False
         st.rerun()
 
-    st.divider()
-    
-    # 3. Filtres
     st.subheader("📅 Filtre de Dades")
     opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Últims 7 dies", "Tot l'any", "Personalitzat"])
     avui = date.today()
@@ -308,27 +351,26 @@ with t2:
 
 with t3:
     st.subheader("Gestió de Pagaments Fixos")
-    st.write("Edita aquí la llista. Quan guardis, s'actualitzarà al Google Sheet (pestanya 'Recurrents').")
+    st.write("Configura aquí els teus pagaments automàtics. Si deixes de pagar-ne un, esborra la fila.")
     
-    # EDITOR DE LA CONFIGURACIÓ
     df_config_editat = st.data_editor(
         df_recurrents_config,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
-            "concepte": st.column_config.TextColumn("Concepte (Ex: Lloguer)", required=True),
+            "concepte": st.column_config.TextColumn("Concepte", required=True),
             "quantitat": st.column_config.NumberColumn("Quantitat (€)", required=True, format="%.2f €"),
             "categoria": st.column_config.SelectboxColumn("Categoria", options=["Llar", "Subscripcions", "Nòmina", "Salut", "Educació", "Cotxe", "Altres"], required=True),
             "tipus": st.column_config.SelectboxColumn("Tipus", options=["Despesa", "Ingrés"], required=True),
-            "dia": st.column_config.NumberColumn("Dia del mes (1-31)", min_value=1, max_value=31, step=1, required=True)
+            "dia": st.column_config.NumberColumn("Dia (1-31)", min_value=1, max_value=31, step=1, required=True)
         },
         key="editor_recurrents"
     )
     
-    if st.button("💾 Guardar Configuració Recurrents"):
-        with st.spinner("Actualitzant Google Sheets..."):
+    if st.button("💾 Guardar Configuració"):
+        with st.spinner("Actualitzant..."):
             guardar_recurrents(df_config_editat)
-            st.success("Configuració actualitzada! L'app farà servir aquests nous valors.")
+            st.success("Configuració actualitzada!")
             st.rerun()
 
 # =================================================
