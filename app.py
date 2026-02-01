@@ -9,12 +9,11 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
-st.set_page_config(page_title="Família Finances v2.0", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Família Finances v2.1", page_icon="🏦", layout="wide")
 
 # CSS CUSTOM PER A LOOK "BANCA MODERNA"
 st.markdown("""
 <style>
-    /* Estil per a les targetes de mètriques (KPIs) */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -31,11 +30,9 @@ st.markdown("""
         color: #1f1f1f;
         font-weight: 700;
     }
-    /* Títols més nets */
     h1, h2, h3 {
         color: #2c3e50;
     }
-    /* Pestanyes personalitzades */
     .stTabs [data-baseweb="tab-list"] {
         gap: 24px;
     }
@@ -79,7 +76,8 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('models/gemini-3-flash-preview') # Recupere 3-flash-preview
+# MODEL POTENT (3-Flash)
+model = genai.GenerativeModel('models/gemini-3-flash-preview')
 
 # --- FUNCIONS DE DADES ---
 def carregar_dades():
@@ -110,12 +108,10 @@ def carregar_dades():
 def carregar_recurrents():
     try:
         df_rec = conn.read(worksheet="Recurrents", ttl=0)
-        # Assegurem que existeixi la columna frequencia, si no, la creem en memòria
         columnes_req = ["concepte", "quantitat", "categoria", "tipus", "dia", "frequencia"]
         if df_rec.empty:
              return pd.DataFrame(columns=columnes_req)
         
-        # Retro-compatibilitat: Si falta 'frequencia', l'omplim amb 'Mensual'
         if "frequencia" not in df_rec.columns:
             df_rec["frequencia"] = "Mensual"
             
@@ -130,7 +126,7 @@ def guardar_dades(df_nou):
 def guardar_recurrents(df_rec_nou):
     conn.update(worksheet="Recurrents", data=df_rec_nou)
 
-# --- LÒGICA AUTOMÀTICA AVANÇADA (FREQÜÈNCIES) ---
+# --- LÒGICA AUTOMÀTICA ---
 def comprovar_recurrents_pendents(df_actual, df_config):
     if df_config.empty:
         return []
@@ -144,25 +140,21 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 
     for rec in recurrents_list:
         try:
-            # 1. FILTRE DE FREQÜÈNCIA
             freq = rec.get('frequencia', 'Mensual')
             toca_aquest_mes = False
             
             if freq == "Mensual":
                 toca_aquest_mes = True
             elif freq == "Trimestral":
-                # Gener (1), Abril (4), Juliol (7), Octubre (10)
                 if mes_actual in [1, 4, 7, 10]:
                     toca_aquest_mes = True
             elif freq == "Anual":
-                # Per defecte assumim Gener (1). Es podria millorar afegint un camp "mes_inici".
                 if mes_actual == 1:
                     toca_aquest_mes = True
             
             if not toca_aquest_mes:
                 continue
 
-            # 2. LÒGICA DE DATA I DUPLICATS
             dia_fix = int(rec['dia'])
             try:
                 data_tocaria = date(any_actual, mes_actual, dia_fix)
@@ -171,14 +163,12 @@ def comprovar_recurrents_pendents(df_actual, df_config):
                 data_tocaria = data_tocaria.replace(day=1) - timedelta(days=1)
             
             if avui >= data_tocaria:
-                # Comprovar pagats
                 duplicat = df_actual[
                     (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
                     (df_actual['data'].apply(lambda x: x.year) == any_actual) &
                     (df_actual['concepte'] == rec['concepte']) &
                     (abs(df_actual['quantitat'] - rec['quantitat']) < 0.01)
                 ]
-                # Comprovar saltats
                 saltat = df_actual[
                     (df_actual['data'].apply(lambda x: x.month) == mes_actual) &
                     (df_actual['data'].apply(lambda x: x.year) == any_actual) &
@@ -207,12 +197,11 @@ df_recurrents_config = carregar_recurrents()
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption("v2.0 - Jose & Alba Edition")
+    st.caption("v2.1 - Jose & Alba Edition")
     st.divider()
     
-    # 1. Comprovació Automàtica
+    # 1. Avisos
     pendents = comprovar_recurrents_pendents(df, df_recurrents_config)
-    
     if pendents:
         st.warning(f"🔔 {len(pendents)} Avisos pendents")
         with st.expander("Gestionar", expanded=True):
@@ -252,9 +241,11 @@ with st.sidebar:
         st.session_state["password_correct"] = False
         st.rerun()
 
+    # 2. FILTRE DE DATES (ARREGLAT!)
     st.subheader("📅 Filtres")
-    opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Tot l'any"])
+    opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Tot l'any", "Personalitzat"])
     avui = date.today()
+    
     if opcio_data == "Aquest Mes":
         inici = avui.replace(day=1)
         fi = avui
@@ -262,9 +253,15 @@ with st.sidebar:
         primer = avui.replace(day=1)
         fi = primer - timedelta(days=1)
         inici = fi.replace(day=1)
-    else: 
+    elif opcio_data == "Tot l'any":
         inici = avui.replace(month=1, day=1)
         fi = avui
+    else: # Personalitzat
+        c1, c2 = st.columns(2)
+        with c1:
+            inici = st.date_input("Inici", avui - timedelta(days=30))
+        with c2:
+            fi = st.date_input("Fi", avui)
 
 if not df.empty:
     mask = (df['data'] >= inici) & (df['data'] <= fi)
@@ -273,28 +270,23 @@ else:
     df_filtrat = df
 
 # =================================================
-# 1. DASHBOARD PREMIUM (TARGETES I GRÀFICS)
+# 1. DASHBOARD PREMIUM
 # =================================================
 
-# Càlculs
 ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
 desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
 saldo = df_filtrat['quantitat'].sum()
 
-# TARGETES ESTIL BANCA
 col1, col2, col3 = st.columns(3)
 col1.metric("🟢 Ingressos", f"{ingr:.2f} €", delta="Mes en curs")
 col2.metric("🔴 Despeses", f"{desp:.2f} €", delta_color="inverse")
 col3.metric("💰 Saldo Disponible", f"{saldo:.2f} €")
 
 st.markdown("<br>", unsafe_allow_html=True)
-
-# SELECTOR DE GRÀFICS DINÀMIC
 vista_grafic = st.radio("Visualització:", ["Evolució Saldo", "Despeses per Categoria", "Detall Ingressos"], horizontal=True)
 
 if not df_filtrat.empty:
     if vista_grafic == "Evolució Saldo":
-        # Gràfic de línia acumulat o barres diàries
         ev = df_filtrat.groupby('data')['quantitat'].sum().reset_index()
         ev['saldo_acumulat'] = ev['quantitat'].cumsum()
         fig = px.bar(ev, x='data', y='quantitat', color='quantitat', title="Flux Diari", color_continuous_scale=px.colors.diverging.RdYlGn)
@@ -312,19 +304,17 @@ if not df_filtrat.empty:
         st.plotly_chart(fig, use_container_width=True)
 
 # =================================================
-# 2. PESTANYES PRINCIPALS (INPUT, CONFIG, ASSESSOR)
+# 2. PESTANYES
 # =================================================
 t1, t2, t3, t4 = st.tabs(["➕ Afegir Moviment", "🧠 Assessoria IA", "⚙️ Configurar Recurrents", "✏️ Editar Dades"])
 
 # --- TAB 1: INPUT ---
 with t1:
     prompt_comu = f"AVUI ÉS: {date.today()}. Analitza text/foto. Retorna LLISTA JSON: 'data' (YYYY-MM-DD), 'concepte', 'establiment', 'quantitat' (Negatiu=Despesa), 'categoria', 'tipus', 'es_periodic' (bool). Si usuari diu 'Ahir', calcula data."
-    
     col_txt, col_foto = st.columns(2)
     with col_txt:
         st.text_area("Escriu aquí (Ex: Ahir 45€ Mercadona)", key="input_text_key", height=100)
         if st.button("Enviar Text"):
-            # Lògica enviament text (simplificada per brevetat, ja la tens)
             txt_val = st.session_state.input_text_key
             if txt_val:
                 try:
@@ -365,44 +355,35 @@ with t1:
                     st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
 
-# --- TAB 2: ASSESSORIA ESTRATÈGICA (NOU!) ---
+# --- TAB 2: ASSESSORIA ESTRATÈGICA ---
 with t2:
     st.subheader("🧠 L'Assessor de la Família")
     st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (850€), Deute (165€) i Reclamació BBVA.")
-    
     if st.button("Generar Anàlisi del Mes"):
         with st.spinner("Consultant l'estratègia amb Gemini..."):
-            # Preparem el context financer del mes
             resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string()
             total_ing = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
             total_desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
-            
             prompt_advisor = f"""
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
             - Jose Manuel està a l'atur.
-            - Tenen un ingrés extra de lloguer de 850€/mes.
-            - Tenen un petit deute pendent de 165€.
-            - Estan esperant una reclamació al BBVA de 1.800€.
-            
-            DADES D'AQUEST MES:
-            - Ingressos totals: {total_ing}€
-            - Despeses totals: {total_desp}€
-            - Desglossament:
-            {resum_cat}
-            
-            TASCA:
-            Dona'm 3 consells molt breus, directes i estratègics (en format llista) per millorar la situació aquest mes. 
-            Sigues realista i empàtic. Parla'ls de tu.
+            - Ingrés extra lloguer 850€/mes.
+            - Deute pendent 165€.
+            - Esperant reclamació BBVA 1.800€.
+            DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
+            Desglossament: {resum_cat}
+            TASCA: 3 consells breus, estratègics i empàtics.
             """
-            
-            res_adv = model.generate_content(prompt_advisor)
-            st.markdown(res_adv.text)
+            try:
+                res_adv = model.generate_content(prompt_advisor)
+                st.markdown(res_adv.text)
+            except Exception as e:
+                st.error(f"Error connectant amb l'assessor: {e}")
 
-# --- TAB 3: CONFIGURAR RECURRENTS (NOU CAMP FREQ) ---
+# --- TAB 3: CONFIGURAR RECURRENTS ---
 with t3:
     st.write("Configura els pagaments fixos. Ara pots triar la freqüència.")
-    
     df_config_editat = st.data_editor(
         df_recurrents_config,
         num_rows="dynamic",
@@ -417,7 +398,6 @@ with t3:
         },
         key="editor_recurrents"
     )
-    
     if st.button("💾 Guardar Configuració"):
         guardar_recurrents(df_config_editat)
         st.success("Configuració actualitzada!")
