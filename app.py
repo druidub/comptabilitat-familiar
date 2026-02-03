@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
-st.set_page_config(page_title="Família Finances v2.2", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Família Finances v2.3", page_icon="🏦", layout="wide")
 
 # CSS CUSTOM
 st.markdown("""
@@ -76,7 +76,6 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
-# Model 3-Flash (el que funciona bé)
 model = genai.GenerativeModel('models/gemini-3-flash-preview')
 
 # --- FUNCIONS DE DADES ---
@@ -126,7 +125,7 @@ def guardar_dades(df_nou):
 def guardar_recurrents(df_rec_nou):
     conn.update(worksheet="Recurrents", data=df_rec_nou)
 
-# --- LÒGICA AUTOMÀTICA (AMB SEMESTRAL) ---
+# --- LÒGICA AUTOMÀTICA ---
 def comprovar_recurrents_pendents(df_actual, df_config):
     if df_config.empty:
         return []
@@ -146,17 +145,11 @@ def comprovar_recurrents_pendents(df_actual, df_config):
             if freq == "Mensual":
                 toca_aquest_mes = True
             elif freq == "Trimestral":
-                # Gener, Abril, Juliol, Octubre
-                if mes_actual in [1, 4, 7, 10]:
-                    toca_aquest_mes = True
+                if mes_actual in [1, 4, 7, 10]: toca_aquest_mes = True
             elif freq == "Semestral":
-                # Gener (1) i Juliol (7)
-                if mes_actual in [1, 7]:
-                    toca_aquest_mes = True
+                if mes_actual in [1, 7]: toca_aquest_mes = True
             elif freq == "Anual":
-                # Gener (1)
-                if mes_actual == 1:
-                    toca_aquest_mes = True
+                if mes_actual == 1: toca_aquest_mes = True
             
             if not toca_aquest_mes:
                 continue
@@ -201,9 +194,8 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
 
-# --- CALLBACK PER AL TEXT (SOLUCIÓ ERROR) ---
+# --- CALLBACK PER AL TEXT (ARREGLAT + NOTIFICACIÓ RECUPERADA) ---
 def processar_text_callback():
-    """Funció que s'executa quan es clica el botó, ABANS de recarregar"""
     text_val = st.session_state.input_text_key
     if not text_val:
         return
@@ -211,8 +203,6 @@ def processar_text_callback():
     prompt_comu = f"AVUI ÉS: {date.today()}. Analitza text. Retorna LLISTA JSON: 'data' (YYYY-MM-DD), 'concepte', 'establiment', 'quantitat' (Negatiu=Despesa), 'categoria', 'tipus', 'es_periodic' (bool). Si usuari diu 'Ahir', calcula data."
     
     try:
-        # Nota: Hem de tornar a llegir df dins el callback o usar el global,
-        # aquí usem el global 'df' i cridem guardar_dades
         global df
         res = model.generate_content([prompt_comu, text_val])
         txt = res.text.replace("```json", "").replace("```", "").strip()
@@ -220,6 +210,8 @@ def processar_text_callback():
         if isinstance(dades, dict): dades = [dades]
         
         noves = []
+        msg_resum = "" # Recuperem variable per al resum
+        
         for item in dades:
             data_f = item.get('data') or date.today()
             noves.append({
@@ -232,11 +224,13 @@ def processar_text_callback():
                 "es_periodic": item.get('es_periodic', False), 
                 "id_grup": "TXT_" + str(uuid.uuid4())[:8]
             })
+            msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
         
         df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
         guardar_dades(df_final)
         
-        # NETEGEM EL TEXT INPUT DE FORMA SEGURA
+        # GUARDAR NOTIFICACIÓ A SESSION STATE (RECUPERAT)
+        st.session_state["ultim_moviment"] = msg_resum
         st.session_state.input_text_key = ""
         st.success("Afegit correctament!")
         
@@ -246,10 +240,10 @@ def processar_text_callback():
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption("v2.2 - Jose & Alba Edition")
+    st.caption("v2.3 - Jose & Alba Edition")
     st.divider()
     
-    # 1. Avisos
+    # 1. Avisos Recurrents
     pendents = comprovar_recurrents_pendents(df, df_recurrents_config)
     if pendents:
         st.warning(f"🔔 {len(pendents)} Avisos pendents")
@@ -285,12 +279,20 @@ with st.sidebar:
     else:
         st.success("✅ Tot al dia")
 
+    # 2. ÚLTIM MOVIMENT (RECUPERAT!!)
     st.divider()
+    if "ultim_moviment" in st.session_state and st.session_state["ultim_moviment"]:
+        st.info(f"🚀 **Últims afegits:**\n\n{st.session_state['ultim_moviment']}")
+        if st.button("Netejar avís"):
+            del st.session_state["ultim_moviment"]
+            st.rerun()
+    st.divider()
+
     if st.button("🔒 Tancar Sessió"):
         st.session_state["password_correct"] = False
         st.rerun()
 
-    # 2. FILTRE DE DATES
+    # 3. FILTRES
     st.subheader("📅 Filtres")
     opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Tot l'any", "Personalitzat"])
     avui = date.today()
@@ -357,13 +359,11 @@ if not df_filtrat.empty:
 # =================================================
 t1, t2, t3, t4 = st.tabs(["➕ Afegir Moviment", "🧠 Assessoria IA", "⚙️ Configurar Recurrents", "✏️ Editar Dades"])
 
-# --- TAB 1: INPUT (ARREGLAT) ---
+# --- TAB 1: INPUT ---
 with t1:
     col_txt, col_foto = st.columns(2)
     with col_txt:
-        # AQUÍ ESTÀ LA SOLUCIÓ DE L'ERROR:
         st.text_area("Escriu aquí (Ex: Ahir 45€ Mercadona)", key="input_text_key", height=100)
-        # Fem servir on_click=funcio, en lloc de if st.button():
         st.button("Enviar Text", on_click=processar_text_callback)
 
     with col_foto:
@@ -379,13 +379,19 @@ with t1:
                     dades = json.loads(txt)
                     if isinstance(dades, dict): dades = [dades]
                     noves = []
+                    msg_resum = "" # Recuperem variable per a foto també
                     grup = "IMG_" + str(uuid.uuid4())[:8]
                     for item in dades:
                         noves.append({
                             "data": item.get('data') or date.today(), "concepte": item.get('concepte'), "establiment": item.get('establiment'), "quantitat": item.get('quantitat'), "categoria": item.get('categoria'), "tipus": item.get('tipus'), "es_periodic": False, "id_grup": grup
                         })
+                        msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
+
                     df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
                     guardar_dades(df_final)
+                    
+                    # GUARDAR NOTIFICACIÓ (RECUPERAT)
+                    st.session_state["ultim_moviment"] = msg_resum
                     st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
 
@@ -402,10 +408,10 @@ with t2:
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
             - Jose Manuel està a l'atur.
-            - Ingresos extra de Jose Manuel de treballs d'edició web.
+            - Ingressos recurrents de Jose Manuel per treballs d'edició web.
             - Ingrés extra lloguer 550€/mes.
+            - Nómina de l'Alba de 1.300€ aprox.
             - Esperant reclamació BBVA 1.800€.
-            - Alba té un sou d'uns 1.300€.
             DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
             Desglossament: {resum_cat}
             TASCA: 3 consells breus, estratègics i empàtics.
@@ -416,7 +422,7 @@ with t2:
             except Exception as e:
                 st.error(f"Error connectant amb l'assessor: {e}")
 
-# --- TAB 3: CONFIGURAR RECURRENTS (NOU: SEMESTRAL) ---
+# --- TAB 3: CONFIGURAR RECURRENTS ---
 with t3:
     st.write("Configura els pagaments fixos. Ara pots triar la freqüència.")
     df_config_editat = st.data_editor(
@@ -429,7 +435,6 @@ with t3:
             "categoria": st.column_config.SelectboxColumn("Categoria", options=["Llar", "Subscripcions", "Nòmina", "Deute", "Lloguer_Ingrés"], required=True),
             "tipus": st.column_config.SelectboxColumn("Tipus", options=["Despesa", "Ingrés"], required=True),
             "dia": st.column_config.NumberColumn("Dia", min_value=1, max_value=31, required=True),
-            # AFEGIT SEMESTRAL AL MENÚ
             "frequencia": st.column_config.SelectboxColumn("Freqüència", options=["Mensual", "Trimestral", "Semestral", "Anual"], required=True, default="Mensual")
         },
         key="editor_recurrents"
