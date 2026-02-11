@@ -425,7 +425,7 @@ with t1:
 # --- TAB 2: ASSESSORIA ESTRATÈGICA ---
 with t2:
     st.subheader("🧠 L'Assessor de la Família")
-    st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (850€), Deute (165€) i Reclamació BBVA.")
+    st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (550€) i Reclamació BBVA.")
     if st.button("Generar Anàlisi del Mes"):
         with st.spinner("Consultant l'estratègia amb Gemini..."):
             resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string()
