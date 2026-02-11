@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
-st.set_page_config(page_title="Família Finances v2.3", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Família Finances v2.4", page_icon="🏦", layout="wide")
 
 # CSS CUSTOM
 st.markdown("""
@@ -194,13 +194,25 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
 
-# --- CALLBACK PER AL TEXT (ARREGLAT + NOTIFICACIÓ RECUPERADA) ---
+# --- PROTECCIÓ DE SIGNE DE QUANTITAT ---
+def corregir_signe(quantitat, tipus):
+    """Assegura que les despeses siguin sempre negatives i els ingressos positius."""
+    if quantitat == 0 or quantitat is None:
+        return 0.0
+    
+    q_abs = abs(float(quantitat))
+    if tipus == "Despesa":
+        return q_abs * -1
+    else: # Ingrés
+        return q_abs
+
+# --- CALLBACK PER AL TEXT ---
 def processar_text_callback():
     text_val = st.session_state.input_text_key
     if not text_val:
         return
 
-    prompt_comu = f"AVUI ÉS: {date.today()}. Analitza text. Retorna LLISTA JSON: 'data' (YYYY-MM-DD), 'concepte', 'establiment', 'quantitat' (Negatiu=Despesa), 'categoria', 'tipus', 'es_periodic' (bool). Si usuari diu 'Ahir', calcula data."
+    prompt_comu = f"AVUI ÉS: {date.today()}. Analitza text. Retorna LLISTA JSON: 'data' (YYYY-MM-DD), 'concepte', 'establiment', 'quantitat' (Número), 'categoria', 'tipus' (Despesa/Ingrés), 'es_periodic' (bool). Si usuari diu 'Ahir', calcula data."
     
     try:
         global df
@@ -210,26 +222,30 @@ def processar_text_callback():
         if isinstance(dades, dict): dades = [dades]
         
         noves = []
-        msg_resum = "" # Recuperem variable per al resum
+        msg_resum = ""
         
         for item in dades:
             data_f = item.get('data') or date.today()
+            tipus_final = item.get('tipus', 'Despesa')
+            
+            # APLIQUEM LA CORRECCIÓ DE SIGNE AQUÍ
+            quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
+            
             noves.append({
                 "data": data_f, 
                 "concepte": item.get('concepte', 'Varies'), 
                 "establiment": item.get('establiment', ''), 
-                "quantitat": item.get('quantitat', 0), 
+                "quantitat": quant_final, 
                 "categoria": item.get('categoria', 'Altres'), 
-                "tipus": item.get('tipus', 'Despesa'), 
+                "tipus": tipus_final, 
                 "es_periodic": item.get('es_periodic', False), 
                 "id_grup": "TXT_" + str(uuid.uuid4())[:8]
             })
-            msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
+            msg_resum += f"- {item.get('concepte')}: {quant_final}€\n"
         
         df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
         guardar_dades(df_final)
         
-        # GUARDAR NOTIFICACIÓ A SESSION STATE (RECUPERAT)
         st.session_state["ultim_moviment"] = msg_resum
         st.session_state.input_text_key = ""
         st.success("Afegit correctament!")
@@ -240,7 +256,7 @@ def processar_text_callback():
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption("v2.3 - Jose & Alba Edition")
+    st.caption("v2.4 - Jose & Alba Edition")
     st.divider()
     
     # 1. Avisos Recurrents
@@ -279,7 +295,7 @@ with st.sidebar:
     else:
         st.success("✅ Tot al dia")
 
-    # 2. ÚLTIM MOVIMENT (RECUPERAT!!)
+    # 2. ÚLTIM MOVIMENT
     st.divider()
     if "ultim_moviment" in st.session_state and st.session_state["ultim_moviment"]:
         st.info(f"🚀 **Últims afegits:**\n\n{st.session_state['ultim_moviment']}")
@@ -379,18 +395,29 @@ with t1:
                     dades = json.loads(txt)
                     if isinstance(dades, dict): dades = [dades]
                     noves = []
-                    msg_resum = "" # Recuperem variable per a foto també
+                    msg_resum = "" 
                     grup = "IMG_" + str(uuid.uuid4())[:8]
                     for item in dades:
+                        tipus_final = item.get('tipus', 'Despesa')
+                        
+                        # APLIQUEM LA CORRECCIÓ DE SIGNE AQUÍ (FOTO)
+                        quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
+
                         noves.append({
-                            "data": item.get('data') or date.today(), "concepte": item.get('concepte'), "establiment": item.get('establiment'), "quantitat": item.get('quantitat'), "categoria": item.get('categoria'), "tipus": item.get('tipus'), "es_periodic": False, "id_grup": grup
+                            "data": item.get('data') or date.today(), 
+                            "concepte": item.get('concepte'), 
+                            "establiment": item.get('establiment'), 
+                            "quantitat": quant_final, 
+                            "categoria": item.get('categoria'), 
+                            "tipus": tipus_final, 
+                            "es_periodic": False, 
+                            "id_grup": grup
                         })
-                        msg_resum += f"- {item.get('concepte')}: {item.get('quantitat')}€\n"
+                        msg_resum += f"- {item.get('concepte')}: {quant_final}€\n"
 
                     df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
                     guardar_dades(df_final)
                     
-                    # GUARDAR NOTIFICACIÓ (RECUPERAT)
                     st.session_state["ultim_moviment"] = msg_resum
                     st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
@@ -408,9 +435,8 @@ with t2:
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
             - Jose Manuel està a l'atur.
-            - Ingressos recurrents de Jose Manuel per treballs d'edició web.
-            - Ingrés extra lloguer 550€/mes.
-            - Nómina de l'Alba de 1.300€ aprox.
+            - Ingrés extra lloguer 850€/mes.
+            - Deute pendent 165€.
             - Esperant reclamació BBVA 1.800€.
             DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
             Desglossament: {resum_cat}
