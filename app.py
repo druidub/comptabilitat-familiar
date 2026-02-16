@@ -448,9 +448,9 @@ with t2:
             prompt_advisor = f"""
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
-            - Jose Manuel està a l'atur.
-            - Ingrés extra lloguer 850€/mes.
-            - Deute pendent 165€.
+            - Jose Manuel està a l'atur tot i que té ingressos recurrents per treballs d'edició web.
+            - Ingrés extra lloguer 550€/mes.
+            - Nómina de l'Alba de 1.300€ aprox.
             - Esperant reclamació BBVA 1.800€.
             DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
             Desglossament: {resum_cat}
