@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
-st.set_page_config(page_title="Família Finances v2.4", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Família Finances v2.5", page_icon="🏦", layout="wide")
 
 # CSS CUSTOM
 st.markdown("""
@@ -194,17 +194,28 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
 
-# --- PROTECCIÓ DE SIGNE DE QUANTITAT ---
+# --- PROTECCIÓ DE SIGNE DE QUANTITAT (ROBUSTA) ---
 def corregir_signe(quantitat, tipus):
     """Assegura que les despeses siguin sempre negatives i els ingressos positius."""
     if quantitat == 0 or quantitat is None:
         return 0.0
     
-    q_abs = abs(float(quantitat))
-    if tipus == "Despesa":
-        return q_abs * -1
-    else: # Ingrés
+    try:
+        q_abs = abs(float(quantitat))
+    except ValueError:
+        return 0.0
+
+    # Normalitzem el tipus per evitar errors de majúscules/espais
+    tipus_norm = str(tipus).strip().capitalize()
+    
+    # Llista de paraules que considerem INGRESSOS
+    paraules_ingres = ["Ingrés", "Ingres", "Ingressos", "Nòmina", "Bizum rebut"]
+    
+    if tipus_norm in paraules_ingres:
         return q_abs
+    else: 
+        # PER DEFECTE TORNEM NEGATIU (Seguretat per a tiquets)
+        return q_abs * -1
 
 # --- CALLBACK PER AL TEXT ---
 def processar_text_callback():
@@ -228,7 +239,7 @@ def processar_text_callback():
             data_f = item.get('data') or date.today()
             tipus_final = item.get('tipus', 'Despesa')
             
-            # APLIQUEM LA CORRECCIÓ DE SIGNE AQUÍ
+            # Corregim signe
             quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
             
             noves.append({
@@ -256,7 +267,7 @@ def processar_text_callback():
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption("v2.4 - Jose & Alba Edition")
+    st.caption("v2.5 - Jose & Alba Edition")
     st.divider()
     
     # 1. Avisos Recurrents
@@ -384,7 +395,7 @@ with t1:
 
     with col_foto:
         im = st.file_uploader("Pujar Tiquet", type=['jpg','png'])
-        prompt_foto = f"AVUI ÉS: {date.today()}. Analitza foto. Retorna LLISTA JSON: 'data', 'concepte', 'establiment', 'quantitat', 'categoria', 'tipus', 'es_periodic' (bool)."
+        prompt_foto = f"AVUI ÉS: {date.today()}. Analitza foto. Retorna LLISTA JSON: 'data', 'concepte', 'establiment', 'quantitat', 'categoria', 'tipus' (Despesa/Ingrés), 'es_periodic' (bool)."
         
         if st.button("Processar Foto") and im:
             with st.spinner("Llegint tiquet..."):
@@ -398,10 +409,13 @@ with t1:
                     msg_resum = "" 
                     grup = "IMG_" + str(uuid.uuid4())[:8]
                     for item in dades:
-                        tipus_final = item.get('tipus', 'Despesa')
-                        
-                        # APLIQUEM LA CORRECCIÓ DE SIGNE AQUÍ (FOTO)
-                        quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
+                        # FORCEM QUE SIGUI DESPESA SI NO DIU CLARAMENT 'Ingrés'
+                        t_prov = item.get('tipus', 'Despesa')
+                        if str(t_prov).strip().capitalize() not in ["Ingrés", "Ingres", "Ingressos"]:
+                            t_prov = "Despesa"
+
+                        # APLIQUEM LA CORRECCIÓ DE SIGNE
+                        quant_final = corregir_signe(item.get('quantitat', 0), t_prov)
 
                         noves.append({
                             "data": item.get('data') or date.today(), 
@@ -409,7 +423,7 @@ with t1:
                             "establiment": item.get('establiment'), 
                             "quantitat": quant_final, 
                             "categoria": item.get('categoria'), 
-                            "tipus": tipus_final, 
+                            "tipus": t_prov, 
                             "es_periodic": False, 
                             "id_grup": grup
                         })
@@ -425,7 +439,7 @@ with t1:
 # --- TAB 2: ASSESSORIA ESTRATÈGICA ---
 with t2:
     st.subheader("🧠 L'Assessor de la Família")
-    st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (550€) i Reclamació BBVA.")
+    st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (850€), Deute (165€) i Reclamació BBVA.")
     if st.button("Generar Anàlisi del Mes"):
         with st.spinner("Consultant l'estratègia amb Gemini..."):
             resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string()
@@ -434,9 +448,9 @@ with t2:
             prompt_advisor = f"""
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
-            - Jose Manuel està a l'atur tot i que té ingressos recurrents per treballs d'edició web.
-            - Ingrés extra lloguer 550€/mes.
-            - Nómina de l'Alba de 1.300€ aprox.
+            - Jose Manuel està a l'atur.
+            - Ingrés extra lloguer 850€/mes.
+            - Deute pendent 165€.
             - Esperant reclamació BBVA 1.800€.
             DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
             Desglossament: {resum_cat}
