@@ -452,7 +452,7 @@ with t2:
             - Ingrés extra lloguer 550€/mes.
             - Nómina de l'Alba de 1.300€ aprox.
             - Esperant reclamació BBVA 1.800€.
-            DADES MES: Ingressos {total_ing}€, Despeses {total_desp}€.
+            DADES MES: Ingressos {ingr}€, Despeses {desp}€.
             Desglossament: {resum_cat}
             TASCA: 3 consells breus, estratègics i empàtics.
             """
