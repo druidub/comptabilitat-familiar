@@ -9,7 +9,7 @@ from PIL import Image
 import uuid 
 
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
-st.set_page_config(page_title="Família Finances v2.5", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Família Finances v2.6", page_icon="🏦", layout="wide")
 
 # CSS CUSTOM
 st.markdown("""
@@ -78,36 +78,40 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('models/gemini-3-flash-preview')
 
-# --- FUNCIONS DE DADES ---
+# --- FUNCIONS DE DADES (AMB PROTECCIÓ D'API) ---
 def carregar_dades():
-    df = conn.read(ttl=0)
     columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "es_periodic", "id_grup"]
-    
-    if df.empty:
-        df = pd.DataFrame(columns=columnes_base)
-    
-    for col in columnes_base:
-        if col not in df.columns:
-            df[col] = ""
+    try:
+        # ttl=5 dóna un petit respir a Google per evitar errors API
+        df = conn.read(ttl=5)
+        if df.empty:
+            df = pd.DataFrame(columns=columnes_base)
+            
+        for col in columnes_base:
+            if col not in df.columns:
+                df[col] = ""
 
-    df['data'] = pd.to_datetime(df['data'], errors='coerce')
-    df['quantitat'] = pd.to_numeric(df['quantitat'], errors='coerce')
-    df = df.dropna(subset=['data', 'quantitat'])
-    df['data'] = df['data'].dt.date
-    
-    cols_str = ['establiment', 'concepte', 'categoria', 'tipus', 'id_grup']
-    for c in cols_str:
-        df[c] = df[c].fillna("").astype(str)
-    
-    df['es_periodic'] = df['es_periodic'].astype(str).map({'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}).fillna(False)
-    df['es_periodic'] = df['es_periodic'].astype(bool)
+        df['data'] = pd.to_datetime(df['data'], errors='coerce')
+        df['quantitat'] = pd.to_numeric(df['quantitat'], errors='coerce')
+        df = df.dropna(subset=['data', 'quantitat'])
+        df['data'] = df['data'].dt.date
+        
+        cols_str = ['establiment', 'concepte', 'categoria', 'tipus', 'id_grup']
+        for c in cols_str:
+            df[c] = df[c].fillna("").astype(str)
+        
+        df['es_periodic'] = df['es_periodic'].astype(str).map({'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}).fillna(False)
+        df['es_periodic'] = df['es_periodic'].astype(bool)
 
-    return df
+        return df
+    except Exception as e:
+        st.error("⚠️ Connexió interrompuda amb Google Sheets (excés de peticions o fallada de xarxa). L'App es recuperarà sola en breu.")
+        return pd.DataFrame(columns=columnes_base)
 
 def carregar_recurrents():
+    columnes_req = ["concepte", "quantitat", "categoria", "tipus", "dia", "frequencia"]
     try:
-        df_rec = conn.read(worksheet="Recurrents", ttl=0)
-        columnes_req = ["concepte", "quantitat", "categoria", "tipus", "dia", "frequencia"]
+        df_rec = conn.read(worksheet="Recurrents", ttl=5)
         if df_rec.empty:
              return pd.DataFrame(columns=columnes_req)
         
@@ -116,18 +120,20 @@ def carregar_recurrents():
             
         return df_rec
     except Exception:
-        st.error("⚠️ Error llegint 'Recurrents'. Revisa que la pestanya existeixi.")
-        return pd.DataFrame(columns=["concepte", "quantitat", "categoria", "tipus", "dia", "frequencia"])
+        st.warning("⚠️ No s'ha pogut carregar la pestanya de Recurrents o no existeix.")
+        return pd.DataFrame(columns=columnes_req)
 
 def guardar_dades(df_nou):
     conn.update(data=df_nou)
+    st.cache_data.clear() # Netegem per forçar la recàrrega fresca a l'instant
 
 def guardar_recurrents(df_rec_nou):
     conn.update(worksheet="Recurrents", data=df_rec_nou)
+    st.cache_data.clear()
 
 # --- LÒGICA AUTOMÀTICA ---
 def comprovar_recurrents_pendents(df_actual, df_config):
-    if df_config.empty:
+    if df_config.empty or df_actual.empty:
         return []
 
     avui = date.today()
@@ -196,25 +202,19 @@ df_recurrents_config = carregar_recurrents()
 
 # --- PROTECCIÓ DE SIGNE DE QUANTITAT (ROBUSTA) ---
 def corregir_signe(quantitat, tipus):
-    """Assegura que les despeses siguin sempre negatives i els ingressos positius."""
     if quantitat == 0 or quantitat is None:
         return 0.0
-    
     try:
         q_abs = abs(float(quantitat))
     except ValueError:
         return 0.0
 
-    # Normalitzem el tipus per evitar errors de majúscules/espais
     tipus_norm = str(tipus).strip().capitalize()
-    
-    # Llista de paraules que considerem INGRESSOS
     paraules_ingres = ["Ingrés", "Ingres", "Ingressos", "Nòmina", "Bizum rebut"]
     
     if tipus_norm in paraules_ingres:
         return q_abs
     else: 
-        # PER DEFECTE TORNEM NEGATIU (Seguretat per a tiquets)
         return q_abs * -1
 
 # --- CALLBACK PER AL TEXT ---
@@ -238,8 +238,6 @@ def processar_text_callback():
         for item in dades:
             data_f = item.get('data') or date.today()
             tipus_final = item.get('tipus', 'Despesa')
-            
-            # Corregim signe
             quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
             
             noves.append({
@@ -267,7 +265,7 @@ def processar_text_callback():
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption("v2.5 - Jose & Alba Edition")
+    st.caption("v2.6 - Jose & Alba Edition")
     st.divider()
     
     # 1. Avisos Recurrents
@@ -303,7 +301,7 @@ with st.sidebar:
                     df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
                     guardar_dades(df_final)
                     st.rerun()
-    else:
+    elif not df.empty:
         st.success("✅ Tot al dia")
 
     # 2. ÚLTIM MOVIMENT
@@ -334,7 +332,7 @@ with st.sidebar:
     elif opcio_data == "Tot l'any":
         inici = avui.replace(month=1, day=1)
         fi = avui
-    else: # Personalitzat
+    else: 
         c1, c2 = st.columns(2)
         with c1:
             inici = st.date_input("Inici", avui - timedelta(days=30))
@@ -351,9 +349,9 @@ else:
 # 1. DASHBOARD PREMIUM
 # =================================================
 
-ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
-desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
-saldo = df_filtrat['quantitat'].sum()
+ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum() if not df_filtrat.empty else 0.0
+desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum() if not df_filtrat.empty else 0.0
+saldo = df_filtrat['quantitat'].sum() if not df_filtrat.empty else 0.0
 
 col1, col2, col3 = st.columns(3)
 col1.metric("🟢 Ingressos", f"{ingr:.2f} €", delta="Mes en curs")
@@ -372,14 +370,20 @@ if not df_filtrat.empty:
         
     elif vista_grafic == "Despeses per Categoria":
         df_desp = df_filtrat[df_filtrat['quantitat'] < 0].copy()
-        df_desp['valor'] = df_desp['quantitat'].abs()
-        fig = px.pie(df_desp, values='valor', names='categoria', title="On van els diners?", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig, use_container_width=True)
+        if not df_desp.empty:
+            df_desp['valor'] = df_desp['quantitat'].abs()
+            fig = px.pie(df_desp, values='valor', names='categoria', title="On van els diners?", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hi ha despeses per mostrar en aquest període.")
         
     elif vista_grafic == "Detall Ingressos":
         df_ing = df_filtrat[df_filtrat['quantitat'] > 0]
-        fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte', title="Fonts d'Ingrés")
-        st.plotly_chart(fig, use_container_width=True)
+        if not df_ing.empty:
+            fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte', title="Fonts d'Ingrés")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hi ha ingressos per mostrar en aquest període.")
 
 # =================================================
 # 2. PESTANYES
@@ -409,12 +413,10 @@ with t1:
                     msg_resum = "" 
                     grup = "IMG_" + str(uuid.uuid4())[:8]
                     for item in dades:
-                        # FORCEM QUE SIGUI DESPESA SI NO DIU CLARAMENT 'Ingrés'
                         t_prov = item.get('tipus', 'Despesa')
                         if str(t_prov).strip().capitalize() not in ["Ingrés", "Ingres", "Ingressos"]:
                             t_prov = "Despesa"
 
-                        # APLIQUEM LA CORRECCIÓ DE SIGNE
                         quant_final = corregir_signe(item.get('quantitat', 0), t_prov)
 
                         noves.append({
@@ -434,7 +436,7 @@ with t1:
                     
                     st.session_state["ultim_moviment"] = msg_resum
                     st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
+                except Exception as e: st.error(f"Error processant la foto: {e}")
 
 # --- TAB 2: ASSESSORIA ESTRATÈGICA ---
 with t2:
@@ -442,9 +444,7 @@ with t2:
     st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (850€), Deute (165€) i Reclamació BBVA.")
     if st.button("Generar Anàlisi del Mes"):
         with st.spinner("Consultant l'estratègia amb Gemini..."):
-            resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string()
-            total_ing = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum()
-            total_desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum()
+            resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string() if not df_filtrat.empty else "Sense dades"
             prompt_advisor = f"""
             Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
             CONTEXT FAMILIAR:
@@ -486,11 +486,14 @@ with t3:
 
 # --- TAB 4: EDITAR DADES ---
 with t4:
-    df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
-    df_editat = st.data_editor(df_per_editar, num_rows="dynamic", use_container_width=True, key="main_editor")
-    if st.button("💾 Guardar Canvis Taula"):
-        mask_fora = (df['data'] < inici) | (df['data'] > fi)
-        df_final = pd.concat([df.loc[mask_fora], df_editat], ignore_index=True)
-        guardar_dades(df_final)
-        st.success("Dades guardades!")
-        st.rerun()
+    if not df.empty:
+        df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
+        df_editat = st.data_editor(df_per_editar, num_rows="dynamic", use_container_width=True, key="main_editor")
+        if st.button("💾 Guardar Canvis Taula"):
+            mask_fora = (df['data'] < inici) | (df['data'] > fi)
+            df_final = pd.concat([df.loc[mask_fora], df_editat], ignore_index=True)
+            guardar_dades(df_final)
+            st.success("Dades guardades!")
+            st.rerun()
+    else:
+        st.info("No hi ha dades per editar.")
