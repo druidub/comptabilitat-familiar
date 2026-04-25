@@ -289,12 +289,22 @@ with st.sidebar:
                 noves = []
                 for index, row in editat_pendents.iterrows():
                     if row['Acció'] == "Afegir":
-                        del row['Acció']
-                        row['id_grup'] = "AUTO_" + str(uuid.uuid4())[:8]
-                        noves.append(row)
+                        # SOLUCIÓ: Convertir la fila de Pandas a un diccionari net
+                        nou_mov = row.to_dict()
+                        del nou_mov['Acció']
+                        nou_mov['id_grup'] = "AUTO_" + str(uuid.uuid4())[:8]
+                        noves.append(nou_mov)
+                        
                     elif row['Acció'] == "Saltar (Ignorar)":
                         noves.append({
-                            "data": row['data'], "concepte": f"SALTAT: {row['concepte']}", "establiment": "Sistema", "quantitat": 0.0, "categoria": row['categoria'], "tipus": row['tipus'], "es_periodic": False, "id_grup": "SKIP_" + str(uuid.uuid4())[:8]
+                            "data": row['data'], 
+                            "concepte": f"SALTAT: {row['concepte']}", 
+                            "establiment": "Sistema", 
+                            "quantitat": 0.0, 
+                            "categoria": row['categoria'], 
+                            "tipus": row['tipus'], 
+                            "es_periodic": False, 
+                            "id_grup": "SKIP_" + str(uuid.uuid4())[:8]
                         })
                 
                 if noves:
