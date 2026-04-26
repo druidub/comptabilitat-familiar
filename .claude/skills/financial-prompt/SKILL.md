@@ -54,7 +54,7 @@ Aquesta és l'única estructura que Gemini ha de retornar quan extreu moviments:
 ### Categories vàlides (tancades)
 
 Despeses: `Llar`, `Subscripcions`, `Alimentació`, `Restauració`, `Transport`, `Salut`, `Oci`, `Roba`, `Deute`, `Altres`.
-Ingressos: `Nòmina`, `Lloguer_Ingrés`, `Freelance`, `Bizum`, `Devolució`, `Altres_Ingrés`.
+Ingressos: `Nòmina`, `Lloguer_Ingrés`, `Freelance`, `Bizum`, `Devolució`, `Ajut_Públic`, `Altres_Ingrés`.
 
 **Sempre incloure-les explícitament al prompt.** Gemini tendeix a improvisar ("Comestibles" en lloc d'"Alimentació") si no es força.
 
@@ -236,7 +236,7 @@ CATEGORIES_VALIDES = {
     "Llar", "Subscripcions", "Alimentació", "Restauració", "Transport",
     "Salut", "Oci", "Roba", "Deute", "Altres",
     "Nòmina", "Lloguer_Ingrés", "Freelance", "Bizum", "Devolució",
-    "Altres_Ingrés",
+    "Ajut_Públic", "Altres_Ingrés",
 }
 
 class Moviment(BaseModel):

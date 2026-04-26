@@ -86,6 +86,13 @@ rendiment_net_mensual: ~754€
 
 Així que quan a Pepe se li acabi la tarifa plana al cap d'un any, la quota saltarà de ~89€ a ~220€/mes (assumint el mateix nivell d'ingressos). **Aquesta és informació crítica per planificar.**
 
+## Mode preview
+
+Si `data_alta_real` és `None` o buida, l'app opera en **mode preview**: les simulacions i càlculs són visibles però no s'acumula cap buffer real. Quan s'omple `data_alta_real`, l'app passa a mode operatiu i comença a comptar mesos de tarifa plana des d'aquesta data.
+
+- Mode preview → `es_mode_preview(config) is True` → mostrar avisos "Simulació" en lloc de xifres reals.
+- Mode operatiu → `es_mode_preview(config) is False` → buffers i tarifa plana actius.
+
 ## Buffer fiscal (què s'ha d'apartar de cada cobrament)
 
 Aquest és el càlcul que el mòdul "Autònom" de l'app ha de fer:
@@ -198,6 +205,22 @@ Estructura proposada per a la pestanya:
 - ❌ No mostrar xifres exactes sense disclaimer — sempre recordar que cal validar amb gestor.
 - ❌ No oblidar que la **regularització** pot fer pagar diners extra l'any següent — el buffer SS hauria de ser conservador.
 - ❌ No assumir que tothom pot accedir a la tarifa plana — té requisits.
+
+## Ajuts públics i Tiquet Rural
+
+**Tiquet Rural** (Catalunya, territoris Leader): ajut a tant alçat fins a **7.500€**, pagat abans o a l'inici de l'activitat. Compromís de 5 anys d'activitat.
+
+**Tractament fiscal**: tributa com a **guany patrimonial a IRPF**, **no** com a rendiment d'activitat econòmica.
+
+Conseqüències:
+- ❌ No s'inclou en el càlcul del rendiment net mensual ni en la determinació del tram RETA.
+- ❌ No entra al Modelo 130 (pagament fraccionat IRPF d'activitat).
+- ✅ Declarar a la renda anual com a guany patrimonial (base de l'estalvi).
+- ✅ Mostra'l com a ingrés extraordinari amb avís: *"Tractament fiscal independent: guany patrimonial. No inclòs en buffers d'autònom."*
+
+**Categoria dedicada**: `Ajut_Públic` (nova categoria d'ingressos).
+
+**Categories d'ingressos vàlides** (actualitzat): `Nòmina`, `Lloguer_Ingrés`, `Freelance`, `Bizum`, `Devolució`, `Ajut_Públic`, `Altres_Ingrés`.
 
 ## Recursos per verificar
 

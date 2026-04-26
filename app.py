@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from PIL import Image
 import uuid
+from core.config_autonom import carregar_config, inicialitzar_config
 
 APP_VERSION = "v2.8"
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -220,6 +221,8 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 client = genai.Client(api_key=API_KEY)
+inicialitzar_config(conn)
+config_autonom = carregar_config(conn)
 
 # --- HELPERS DE RESILIÈNCIA ---
 def amb_reintents(fn, *args, intents=3, base=1.0, **kwargs):
@@ -247,7 +250,7 @@ def parsejar_json_ia(text):
 
 # --- FUNCIONS DE DADES (AMB PROTECCIÓ D'API) ---
 def carregar_dades():
-    columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "es_periodic", "id_grup"]
+    columnes_base = ["data", "concepte", "establiment", "quantitat", "categoria", "tipus", "aplica_iva", "es_periodic", "id_grup"]
     try:
         df = amb_reintents(conn.read, ttl=GSHEETS_TTL)
         if df is None or df.empty:
@@ -267,6 +270,10 @@ def carregar_dades():
             df[c] = df[c].fillna("").astype(str)
 
         df['es_periodic'] = df['es_periodic'].astype(str).map(
+            {'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}
+        ).fillna(False).astype(bool)
+
+        df['aplica_iva'] = df['aplica_iva'].astype(str).map(
             {'TRUE': True, 'True': True, 'true': True, '1': True, '1.0': True}
         ).fillna(False).astype(bool)
 
@@ -370,6 +377,17 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
 
+# Migració idempotent: afegir aplica_iva al Sheet principal si no hi existia
+if not st.session_state.get("_aplica_iva_ok"):
+    st.session_state["_aplica_iva_ok"] = True
+    if not df.empty:
+        try:
+            _raw = amb_reintents(conn.read, ttl=0)
+            if _raw is not None and "aplica_iva" not in _raw.columns:
+                guardar_dades(df)
+        except Exception:
+            pass
+
 # --- PROTECCIÓ DE SIGNE DE QUANTITAT (ROBUSTA) ---
 PARAULES_INGRES = {"ingrés", "ingres", "ingressos", "nòmina", "nomina", "bizum rebut", "income"}
 
@@ -430,6 +448,7 @@ def processar_text_callback():
         msg_resum = ""
         grup = "TXT_" + str(uuid.uuid4())[:8]
 
+        _iva_per_defecte = config_autonom.get("iva_per_defecte", "TRUE").upper() == "TRUE"
         for item in dades:
             tipus_final = item.get('tipus', 'Despesa')
             quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
@@ -441,6 +460,7 @@ def processar_text_callback():
                 "quantitat": quant_final,
                 "categoria": item.get('categoria', 'Altres'),
                 "tipus": tipus_final,
+                "aplica_iva": _iva_per_defecte if tipus_final == "Ingrés" else False,
                 "es_periodic": bool(item.get('es_periodic', False)),
                 "id_grup": grup,
             })
@@ -733,6 +753,7 @@ Regles:
                             "quantitat": quant_final,
                             "categoria": item.get('categoria') or "Altres",
                             "tipus": t_prov,
+                            "aplica_iva": False,
                             "es_periodic": False,
                             "id_grup": grup,
                         })
@@ -812,7 +833,7 @@ with t4:
         column_config={
             "concepte": st.column_config.TextColumn("Concepte", required=True),
             "quantitat": st.column_config.NumberColumn("€", required=True, format="%.2f €"),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=["Llar", "Subscripcions", "Nòmina", "Deute", "Lloguer_Ingrés"], required=True),
+            "categoria": st.column_config.SelectboxColumn("Categoria", options=["Llar", "Subscripcions", "Nòmina", "Deute", "Lloguer_Ingrés", "Ajut_Públic"], required=True),
             "tipus": st.column_config.SelectboxColumn("Tipus", options=["Despesa", "Ingrés"], required=True),
             "dia": st.column_config.NumberColumn("Dia", min_value=1, max_value=31, required=True),
             "frequencia": st.column_config.SelectboxColumn("Freqüència", options=["Mensual", "Trimestral", "Semestral", "Anual"], required=True, default="Mensual")
