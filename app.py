@@ -19,6 +19,10 @@ from core.autonom import (
     calcular_buffers_trimestre, tarifa_plana_estat, proxim_venciment,
     trimestre_de, TARIFA_PLANA_AMB_MEI,
 )
+from core.pressupostos import (
+    inicialitzar_pressupostos, carregar_pressupostos, guardar_pressupostos,
+    calcular_estats_categoria, CATEGORIES_DESPESA,
+)
 
 
 APP_VERSION = "v2.8"
@@ -233,6 +237,7 @@ client = genai.Client(api_key=API_KEY)
 inicialitzar_config(conn)
 _assegurar_columna_aplica_iva(conn)
 config_autonom = carregar_config(conn)
+inicialitzar_pressupostos(conn)
 
 # --- HELPERS DE RESILIÈNCIA ---
 def amb_reintents(fn, *args, intents=3, base=1.0, **kwargs):
@@ -477,13 +482,59 @@ def processar_text_callback():
     except Exception as e:
         st.error(f"Error processant: {str(e)[:200]}")
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (part 1: filtres) ---
+avui = date.today()
 with st.sidebar:
     st.title("🏦 Família Finances")
     st.caption(f"{APP_VERSION} - Jose & Alba Edition")
     st.divider()
-    
-    # 1. Avisos Recurrents
+
+    st.subheader("📅 Filtres")
+    opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Tot l'any", "Personalitzat"])
+
+    if opcio_data == "Aquest Mes":
+        inici = avui.replace(day=1)
+        fi = avui
+    elif opcio_data == "Mes Anterior":
+        primer = avui.replace(day=1)
+        fi = primer - timedelta(days=1)
+        inici = fi.replace(day=1)
+    elif opcio_data == "Tot l'any":
+        inici = avui.replace(month=1, day=1)
+        fi = avui
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            inici = st.date_input("Inici", avui - timedelta(days=30))
+        with c2:
+            fi = st.date_input("Fi", avui)
+
+if not df.empty:
+    mask = (df['data'] >= inici) & (df['data'] <= fi)
+    df_filtrat = df.loc[mask]
+else:
+    df_filtrat = df
+
+pressupostos = carregar_pressupostos(conn)
+if opcio_data == "Aquest Mes":
+    estats = calcular_estats_categoria(df_filtrat, pressupostos, avui)
+else:
+    estats = {}
+
+# --- BARRA LATERAL (part 2: alertes + notificacions) ---
+with st.sidebar:
+    if opcio_data == "Aquest Mes":
+        estats_alerta = [(cat, e) for cat, e in estats.items() if e["estat"] == "vermell"]
+        if estats_alerta:
+            st.markdown("### ⚠️ Alertes pressupost")
+            for cat, e in estats_alerta:
+                st.error(
+                    f"**{cat}**: {e['pct_consumit']*100:.0f}% consumit "
+                    f"(esperat {e['pct_esperat']*100:.0f}%)"
+                )
+            st.divider()
+
+    # Avisos Recurrents
     pendents = comprovar_recurrents_pendents(df, df_recurrents_config)
     if pendents:
         st.warning(f"🔔 {len(pendents)} Avisos pendents")
@@ -499,29 +550,28 @@ with st.sidebar:
                 },
                 hide_index=True, key="side_editor"
             )
-            
+
             if st.button("🚀 Processar"):
                 noves = []
                 for index, row in editat_pendents.iterrows():
                     if row['Acció'] == "Afegir":
-                        # SOLUCIÓ: Convertir la fila de Pandas a un diccionari net
                         nou_mov = row.to_dict()
                         del nou_mov['Acció']
                         nou_mov['id_grup'] = "AUTO_" + str(uuid.uuid4())[:8]
                         noves.append(nou_mov)
-                        
+
                     elif row['Acció'] == "Saltar (Ignorar)":
                         noves.append({
-                            "data": row['data'], 
-                            "concepte": f"SALTAT: {row['concepte']}", 
-                            "establiment": "Sistema", 
-                            "quantitat": 0.0, 
-                            "categoria": row['categoria'], 
-                            "tipus": row['tipus'], 
-                            "es_periodic": False, 
+                            "data": row['data'],
+                            "concepte": f"SALTAT: {row['concepte']}",
+                            "establiment": "Sistema",
+                            "quantitat": 0.0,
+                            "categoria": row['categoria'],
+                            "tipus": row['tipus'],
+                            "es_periodic": False,
                             "id_grup": "SKIP_" + str(uuid.uuid4())[:8]
                         })
-                
+
                 if noves:
                     df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
                     guardar_dades(df_final)
@@ -529,7 +579,6 @@ with st.sidebar:
     elif not df.empty:
         st.success("✅ Tot al dia")
 
-    # 2. ÚLTIM MOVIMENT
     st.divider()
     if "ultim_moviment" in st.session_state and st.session_state["ultim_moviment"]:
         st.info(f"🚀 **Últims afegits:**\n\n{st.session_state['ultim_moviment']}")
@@ -541,34 +590,6 @@ with st.sidebar:
     if st.button("🔒 Tancar Sessió"):
         st.session_state["password_correct"] = False
         st.rerun()
-
-    # 3. FILTRES
-    st.subheader("📅 Filtres")
-    opcio_data = st.selectbox("Període", ["Aquest Mes", "Mes Anterior", "Tot l'any", "Personalitzat"])
-    avui = date.today()
-    
-    if opcio_data == "Aquest Mes":
-        inici = avui.replace(day=1)
-        fi = avui
-    elif opcio_data == "Mes Anterior":
-        primer = avui.replace(day=1)
-        fi = primer - timedelta(days=1)
-        inici = fi.replace(day=1)
-    elif opcio_data == "Tot l'any":
-        inici = avui.replace(month=1, day=1)
-        fi = avui
-    else: 
-        c1, c2 = st.columns(2)
-        with c1:
-            inici = st.date_input("Inici", avui - timedelta(days=30))
-        with c2:
-            fi = st.date_input("Fi", avui)
-
-if not df.empty:
-    mask = (df['data'] >= inici) & (df['data'] <= fi)
-    df_filtrat = df.loc[mask]
-else:
-    df_filtrat = df
 
 # =================================================
 # 1. DASHBOARD PREMIUM
@@ -664,6 +685,44 @@ if not df_filtrat.empty:
             st.plotly_chart(aplicar_tema(fig, "Fonts d'Ingrés"), width="stretch")
         else:
             st.info("💰 Cap ingrés en aquest període. Afegeix moviments o canvia el filtre de dates.")
+
+# --- ESTAT PRESSUPOSTOS (dashboard, "Aquest Mes" only) ---
+if opcio_data == "Aquest Mes" and estats:
+    estats_actius = {k: v for k, v in estats.items() if v["estat"] != "sense_pressupost"}
+    if estats_actius:
+        st.markdown("### 📊 Estat dels pressupostos")
+
+        def _render_progress_pp(pct: float, estat: str) -> None:
+            color_var = {
+                "verd": "var(--success)",
+                "groc": "var(--warning)",
+                "vermell": "var(--danger)",
+            }[estat]
+            bar_width = min(pct * 100, 100)
+            st.markdown(
+                f'<div style="background:var(--bg-subtle);border-radius:8px;height:12px;overflow:hidden;">'
+                f'<div style="background:{color_var};height:100%;width:{bar_width:.1f}%;transition:width 0.3s ease;"></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        _EMOJI_PP = {"verd": "🟢", "groc": "🟡", "vermell": "🔴"}
+        for _cat, _e in estats_actius.items():
+            _import_mensual = pressupostos.get(_cat, 0.0)
+            _despesa_cat = _import_mensual - _e["restant"]
+            _c1, _c2, _c3 = st.columns([4, 5, 1])
+            with _c1:
+                st.markdown(f"**{_cat}**")
+                st.caption(f"{_despesa_cat:,.0f} / {_import_mensual:,.0f} €")
+            with _c2:
+                _render_progress_pp(_e["pct_consumit"], _e["estat"])
+                st.caption(f"{_e['pct_consumit']*100:.0f}% · queden {_e['restant']:,.0f} €")
+            with _c3:
+                st.markdown(
+                    f'<div style="text-align:center;font-size:1.3rem;margin-top:4px">'
+                    f'{_EMOJI_PP[_e["estat"]]}</div>',
+                    unsafe_allow_html=True,
+                )
 
 # =================================================
 # 2. PESTANYES
@@ -842,6 +901,34 @@ with t4:
     if st.button("💾 Guardar Configuració"):
         guardar_recurrents(df_config_editat)
         st.success("Configuració actualitzada!")
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("### 💰 Pressupostos mensuals per categoria")
+    _pp_df = pd.DataFrame([
+        {"categoria": cat, "import_mensual": pressupostos.get(cat, 0.0)}
+        for cat in CATEGORIES_DESPESA
+    ])
+    _pp_editat = st.data_editor(
+        _pp_df,
+        column_config={
+            "categoria": st.column_config.TextColumn("Categoria", disabled=True),
+            "import_mensual": st.column_config.NumberColumn(
+                "Import mensual (€)",
+                min_value=0.0,
+                step=10.0,
+                format="%.2f €",
+            ),
+        },
+        hide_index=True,
+        key="editor_pressupostos",
+    )
+    st.caption("Posa 0 a una categoria si no vols definir pressupost. L'app només alertarà de les categories amb import > 0.")
+    if st.button("💾 Desar pressupostos", type="primary", key="btn_desar_pp"):
+        nous_pp = dict(zip(_pp_editat["categoria"], _pp_editat["import_mensual"]))
+        guardar_pressupostos(conn, nous_pp)
+        st.cache_data.clear()
+        st.success("Pressupostos actualitzats.")
         st.rerun()
 
 # --- TAB 5: AUTÒNOM ---
