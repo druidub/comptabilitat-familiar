@@ -1,9 +1,57 @@
 """Tests per a core/config_autonom.py."""
+from datetime import date
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 
-from core.config_autonom import DEFAULTS, _carregar_config_raw, es_mode_preview
+from core.config_autonom import DEFAULTS, _carregar_config_raw, _coerce, es_mode_preview
+
+
+# ---------------------------------------------------------------------------
+# _coerce — conversió de tipus des de strings de Sheets
+# ---------------------------------------------------------------------------
+
+def test_coerce_bool_false_string():
+    assert _coerce("False", "bool") is False
+
+def test_coerce_bool_true_string():
+    assert _coerce("TRUE", "bool") is True
+
+def test_coerce_bool_true_lowercase():
+    assert _coerce("true", "bool") is True
+
+def test_coerce_float_valid():
+    assert _coerce("1500.50", "float") == pytest.approx(1500.5)
+
+def test_coerce_float_from_bool_string():
+    assert _coerce("False", "float") == 0.0
+
+def test_coerce_float_zero_string():
+    assert _coerce("0", "float") == 0.0
+
+def test_coerce_int_valid():
+    assert _coerce("4", "int") == 4
+
+def test_coerce_int_from_float_string():
+    assert _coerce("3.9", "int") == 3
+
+def test_coerce_date_valid():
+    assert _coerce("2026-09-01", "date") == date(2026, 9, 1)
+
+def test_coerce_date_invalid_returns_none():
+    assert _coerce("not-a-date", "date") is None
+
+def test_coerce_date_optional_empty():
+    assert _coerce("", "date_optional") is None
+
+def test_coerce_date_optional_nan():
+    assert _coerce("nan", "date_optional") is None
+
+def test_coerce_date_optional_valid():
+    assert _coerce("2026-09-01", "date_optional") == date(2026, 9, 1)
+
+def test_coerce_str_passthrough():
+    assert _coerce("sollicitat", "str") == "sollicitat"
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +92,9 @@ def test_carregar_config_llegeix_clau_valor():
 
     config = _carregar_config_raw(mock_conn)
 
-    assert config["data_alta_real"] == "2026-09-01"
-    assert config["iva_per_defecte"] == "FALSE"
+    # Ara retorna valors tipats, no strings crus
+    assert config["data_alta_real"] == date(2026, 9, 1)
+    assert config["iva_per_defecte"] is False
 
 
 def test_carregar_config_fallback_defaults_si_sheet_buit():
@@ -54,7 +103,11 @@ def test_carregar_config_fallback_defaults_si_sheet_buit():
 
     config = _carregar_config_raw(mock_conn)
 
-    assert config == DEFAULTS
+    # Els defaults passen per coerció, ja no són strings purs
+    assert config["iva_per_defecte"] is True
+    assert config["factures_aprox_mes"] == 4
+    assert config["retencio_irpf_pct"] == pytest.approx(0.15)
+    assert config["data_alta_real"] is None
 
 
 def test_carregar_config_fallback_defaults_si_connexio_falla():
@@ -63,7 +116,9 @@ def test_carregar_config_fallback_defaults_si_connexio_falla():
 
     config = _carregar_config_raw(mock_conn)
 
-    assert config == DEFAULTS
+    assert config["iva_per_defecte"] is True
+    assert config["tarifa_plana_prorrogada"] is False
+    assert config["tiquet_rural_quantia"] == 0.0
 
 
 def test_carregar_config_manté_defaults_per_claus_no_presents():
@@ -75,8 +130,9 @@ def test_carregar_config_manté_defaults_per_claus_no_presents():
 
     config = _carregar_config_raw(mock_conn)
 
-    assert config["iva_per_defecte"] == DEFAULTS["iva_per_defecte"]
-    assert config["factures_aprox_mes"] == DEFAULTS["factures_aprox_mes"]
+    # Default "TRUE" → True (bool tipat)
+    assert config["iva_per_defecte"] is True
+    assert config["factures_aprox_mes"] == 4
 
 
 def test_carregar_config_valor_nan_es_buit():
@@ -88,5 +144,6 @@ def test_carregar_config_valor_nan_es_buit():
 
     config = _carregar_config_raw(mock_conn)
 
-    assert config["data_alta_real"] == ""
+    # nan → date_optional → None
+    assert config["data_alta_real"] is None
     assert es_mode_preview(config) is True

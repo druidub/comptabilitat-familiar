@@ -424,6 +424,32 @@ _assegurar_columna_aplica_iva(conn) # migració idempotent de columna
 config_autonom = carregar_config(conn)
 ```
 
+### Coerció tipada obligatòria en llegir config clau-valor
+
+> **Regla**: Sheets retorna **tot com a string**. Els booleans es serialitzen `"TRUE"`/`"FALSE"` (majúscules), no com Python `True`/`False`. Qualsevol config clau-valor llegida des de Sheets ha de passar per coerció explícita.
+
+```python
+TIPUS_CONFIG = {
+    "clau_bool": "bool",       # "TRUE"/"FALSE"/"1" → bool
+    "clau_int": "int",         # "4" → 4
+    "clau_float": "float",     # "0.15" → 0.15; "False" → 0.0 (robust)
+    "clau_date": "date",       # "2026-09-01" → date(2026,9,1)
+    "clau_date_opt": "date_optional",  # "" / "nan" → None
+    "clau_str": "str",         # passthrough
+}
+
+def _coerce(valor, tipus: str):
+    s = str(valor).strip()
+    if tipus == "bool":
+        return s.lower() in ("true", "1", "yes", "sí", "si")
+    if tipus == "float":
+        try: return float(s)
+        except (ValueError, TypeError): return 0.0
+    # ... (veure core/config_autonom.py per implementació completa)
+```
+
+**Mai** comparar directament `config["iva_per_defecte"] == "TRUE"` — usar `config["iva_per_defecte"] is True` després de la coerció.
+
 ### Quan NO cal gspread
 
 - Llegir dades → `conn.read(worksheet=..., ttl=N)`

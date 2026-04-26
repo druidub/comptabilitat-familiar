@@ -1,6 +1,7 @@
 """Configuració de l'autònom — pestanya Config_Autonom de Google Sheets."""
 from __future__ import annotations
 
+from datetime import date
 import gspread
 import pandas as pd
 import streamlit as st
@@ -18,6 +19,49 @@ DEFAULTS: dict[str, str] = {
     "tiquet_rural_quantia": "0",
     "tiquet_rural_data_resolucio": "",
 }
+
+# Tipus esperat per a cada clau — Sheets retorna tot com a string
+TIPUS_CONFIG: dict[str, str] = {
+    "data_alta_prevista": "date",
+    "data_alta_real": "date_optional",
+    "tarifa_plana_prorrogada": "bool",
+    "iva_per_defecte": "bool",
+    "factures_aprox_mes": "int",
+    "retencio_irpf_pct": "float",
+    "tiquet_rural_estat": "str",
+    "tiquet_rural_quantia": "float",
+    "tiquet_rural_data_resolucio": "date_optional",
+}
+
+
+def _coerce(valor, tipus: str):
+    """Converteix un valor llegit de Sheets al tipus Python esperat."""
+    s = str(valor).strip()
+    if tipus == "bool":
+        return s.lower() in ("true", "1", "yes", "sí", "si")
+    if tipus == "int":
+        try:
+            return int(float(s))
+        except (ValueError, TypeError):
+            return 0
+    if tipus == "float":
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return 0.0
+    if tipus == "date":
+        try:
+            return date.fromisoformat(s)
+        except (ValueError, TypeError):
+            return None
+    if tipus == "date_optional":
+        if not s or s.lower() in ("none", "nan", ""):
+            return None
+        try:
+            return date.fromisoformat(s)
+        except (ValueError, TypeError):
+            return None
+    return s  # str per defecte
 
 
 def _spreadsheet(conn):
@@ -62,21 +106,29 @@ def _assegurar_columna_aplica_iva(conn) -> None:
 
 
 def _carregar_config_raw(conn) -> dict:
-    """Llegeix Config_Autonom i retorna un dict clau→valor. Sense cache — testable."""
+    """Llegeix Config_Autonom, retorna dict amb valors tipats. Sense cache — testable."""
     try:
         df = conn.read(worksheet=PESTANYA, ttl=0)
         if df is None or df.empty or "clau" not in df.columns:
-            return DEFAULTS.copy()
-        config = DEFAULTS.copy()
+            return _config_tipada(DEFAULTS)
+        config_cru = DEFAULTS.copy()
         for _, row in df.iterrows():
             clau = str(row.get("clau", "")).strip()
             valor_raw = row.get("valor", "")
             valor = "" if str(valor_raw) in ("nan", "None") else str(valor_raw).strip()
             if clau:
-                config[clau] = valor
-        return config
+                config_cru[clau] = valor
+        return _config_tipada(config_cru)
     except Exception:
-        return DEFAULTS.copy()
+        return _config_tipada(DEFAULTS)
+
+
+def _config_tipada(config_cru: dict) -> dict:
+    """Aplica coerció de tipus a cada clau coneguda; les desconegudes passen com a str."""
+    return {
+        clau: _coerce(config_cru.get(clau, ""), TIPUS_CONFIG.get(clau, "str"))
+        for clau in TIPUS_CONFIG
+    }
 
 
 @st.cache_data(ttl=60)
@@ -86,8 +138,17 @@ def carregar_config(_conn) -> dict:
 
 
 def guardar_config(conn, config: dict) -> None:
-    """Escriu el dict config a Config_Autonom com a taula clau/valor."""
-    files = [{"clau": k, "valor": v} for k, v in config.items()]
+    """Serialitza config a strings i escriu a Config_Autonom."""
+    def _ser(v) -> str:
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        if isinstance(v, date):
+            return v.isoformat()
+        if v is None:
+            return ""
+        return str(v)
+
+    files = [{"clau": k, "valor": _ser(v)} for k, v in config.items()]
     conn.update(worksheet=PESTANYA, data=pd.DataFrame(files))
     st.cache_data.clear()
 
@@ -107,6 +168,4 @@ def inicialitzar_config(conn) -> None:
 def es_mode_preview(config: dict) -> bool:
     """Retorna True si data_alta_real és buida o absent (mode preview)."""
     val = config.get("data_alta_real")
-    if val is None:
-        return True
-    return str(val).strip() == ""
+    return val is None or (isinstance(val, str) and val.strip() == "")
