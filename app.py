@@ -20,15 +20,6 @@ from core.autonom import (
     trimestre_de, TARIFA_PLANA_AMB_MEI,
 )
 
-import logging
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("autonom-init")
-
-try:
-    config = carregar_config()
-    log.info(f"Config carregada: {config}")
-except Exception as e:
-    log.error(f"Error carregant config: {e}", exc_info=True)
 
 APP_VERSION = "v2.8"
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -456,7 +447,7 @@ def processar_text_callback():
         msg_resum = ""
         grup = "TXT_" + str(uuid.uuid4())[:8]
 
-        _iva_per_defecte = config_autonom.get("iva_per_defecte", "TRUE").upper() == "TRUE"
+        _iva_per_defecte = config_autonom.get("iva_per_defecte", True)
         for item in dades:
             tipus_final = item.get('tipus', 'Despesa')
             quant_final = corregir_signe(item.get('quantitat', 0), tipus_final)
@@ -858,14 +849,15 @@ with t5:
     _cfg = carregar_config(conn)
     _preview = es_mode_preview(_cfg)
 
-    _factures_mes = int(_cfg.get("factures_aprox_mes", 4) or 4)
-    _retencio = float(_cfg.get("retencio_irpf_pct", 0.15) or 0.15)
-    _iva_def = _cfg.get("iva_per_defecte", "TRUE").upper() == "TRUE"
-    _prorrogada = _cfg.get("tarifa_plana_prorrogada", "FALSE").upper() == "TRUE"
+    _factures_mes = _cfg.get("factures_aprox_mes", 4) or 4
+    _retencio = _cfg.get("retencio_irpf_pct", 0.15) or 0.15
+    _iva_def = _cfg.get("iva_per_defecte", True)
+    _prorrogada = _cfg.get("tarifa_plana_prorrogada", False)
 
     # ── HEADER CARD ────────────────────────────────────────────────────
     if _preview:
-        _alta_prev = _cfg.get("data_alta_prevista", "—")
+        _alta_prev_date = _cfg.get("data_alta_prevista")
+        _alta_prev = _alta_prev_date.isoformat() if _alta_prev_date else "—"
         st.markdown(
             f'<div class="custom-card accent" style="margin-bottom:16px;">'
             f'<span style="font-size:1.1rem;font-weight:700;">🔮 Mode Preview</span>'
@@ -922,12 +914,8 @@ with t5:
 
     else:
         # ── MODE OPERATIU ──────────────────────────────────────────────
-        _alta_real_str = _cfg.get("data_alta_real", "")
-        try:
-            from datetime import date as _date_cls
-            _data_alta = _date_cls.fromisoformat(_alta_real_str)
-        except Exception:
-            _data_alta = date.today()
+        _data_alta = _cfg.get("data_alta_real") or date.today()
+        _alta_real_str = _data_alta.isoformat() if hasattr(_data_alta, "isoformat") else str(_data_alta)
 
         _estat_tp = tarifa_plana_estat(_data_alta, prorroga_activa=_prorrogada)
         _trim_actual = trimestre_de(date.today())
@@ -1021,8 +1009,9 @@ with t5:
     _tr_estat = _cfg.get("tiquet_rural_estat", "no_aplica")
     if _tr_estat and _tr_estat != "no_aplica":
         st.markdown("---")
-        _tr_quantia = float(_cfg.get("tiquet_rural_quantia", 0) or 0)
-        _tr_data_res = _cfg.get("tiquet_rural_data_resolucio", "") or "—"
+        _tr_quantia = _cfg.get("tiquet_rural_quantia", 0.0) or 0.0
+        _tr_data_res_date = _cfg.get("tiquet_rural_data_resolucio")
+        _tr_data_res = _tr_data_res_date.isoformat() if _tr_data_res_date else "—"
 
         if _tr_estat in ("concedit", "pagat"):
             _tr_bg = "var(--success-soft)"
@@ -1059,14 +1048,14 @@ with t5:
         with st.form("form_config_autonom"):
             _f_alta_prev = st.date_input(
                 "Data d'alta prevista",
-                value=date.fromisoformat(_cfg.get("data_alta_prevista", "2026-09-01")),
+                value=_cfg.get("data_alta_prevista") or date(2026, 9, 1),
             )
             _f_donat = st.checkbox(
                 "Ja estic donat d'alta", value=not _preview
             )
             _f_alta_real = st.date_input(
                 "Data d'alta real",
-                value=date.fromisoformat(_cfg["data_alta_real"]) if _cfg.get("data_alta_real") else date.today(),
+                value=_cfg.get("data_alta_real") or date.today(),
                 disabled=not _f_donat,
             )
             _f_prorrogada = st.checkbox("Tarifa plana prorrogada (2n any)", value=_prorrogada)
@@ -1085,12 +1074,9 @@ with t5:
                       if _tr_estat in ["no_aplica","sollicitat","concedit","pagat","denegat"] else 0,
             )
             _f_tr_quantia = st.number_input("Tiquet Rural — quantia (€)", min_value=0.0,
-                                            value=float(_cfg.get("tiquet_rural_quantia", 0) or 0),
+                                            value=_cfg.get("tiquet_rural_quantia", 0.0) or 0.0,
                                             step=500.0)
-            try:
-                _tr_data_val = date.fromisoformat(_cfg.get("tiquet_rural_data_resolucio", "") or date.today().isoformat())
-            except Exception:
-                _tr_data_val = date.today()
+            _tr_data_val = _cfg.get("tiquet_rural_data_resolucio") or date.today()
             _f_tr_data = st.date_input("Tiquet Rural — data resolució prevista", value=_tr_data_val)
 
             if st.form_submit_button("💾 Desar configuració", type="primary"):
