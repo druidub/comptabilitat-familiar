@@ -106,25 +106,70 @@ div[data-testid="stMetricValue"] {
 - Format de números: `f"{valor:,.2f} €"` per separador de milers.
 - Per percentatges: `f"{p:.1f}%"`, sense decimals si ≥ 100%.
 
+## Layout global
+
+Regles que afecten tota l'app (van al bloc CSS principal, secció `/* === LAYOUT GLOBAL === */`):
+
+```css
+/* Header transparent: no tapa contingut en mòbil ni en la pantalla de login */
+header[data-testid="stHeader"] { background: transparent; height: 0; }
+header[data-testid="stHeader"]::before { display: none; }
+
+/* Limitar amplada a escriptori per evitar cards estirades */
+.block-container { max-width: 1280px; margin: 0 auto; padding-top: 2rem; }
+```
+
+**Nota**: `padding-top: 2rem` al `.block-container` global; dins `@media (max-width: 640px)` es sobreescriu a `0.5rem !important`.
+
+## Inputs
+
+Inputs i textareas coherents amb la paleta. Afegir a la secció `/* === INPUTS === */`:
+
+```css
+div[data-baseweb="textarea"] textarea,
+div[data-baseweb="input"] input {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-md) !important;
+    color: var(--text-primary) !important;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+div[data-baseweb="textarea"]:focus-within,
+div[data-baseweb="input"]:focus-within {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
+    border-radius: var(--radius-md) !important;
+}
+```
+
 ## Responsive (mòbil)
 
 L'app ha de funcionar bé al mòbil de Pepe i de l'Alba. Streamlit no fa responsive per defecte, així que cal CSS dirigit:
 
 ```css
 @media (max-width: 640px) {
-    div[data-testid="stMetric"] {
-        padding: 12px 14px;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.3rem !important;
-    }
+    div[data-testid="stMetric"] { padding: 12px 14px; }
+    div[data-testid="stMetricValue"] { font-size: 1.3rem !important; }
     .stTabs [data-baseweb="tab"] {
         font-size: 0.85rem;
         padding: 0 12px;
         height: 42px;
     }
-    /* Reduir gaps entre seccions per aprofitar pantalla */
-    .block-container { padding-top: 1rem !important; }
+    .block-container { padding-top: 0.5rem !important; }
+
+    /* Grid 2×2: ATENCIÓ — afecta TOTES les st.columns() de l'app.
+       Selector correcte (Streamlit ≥1.40): data-testid="column" (NO "stColumn").
+       Efecte col·lateral conegut: st.columns(2) queda 50%/50% en comptes de stack.
+       Si cal excepció per a un bloc concret, afegir regla específica que sobreescrigui. */
+    div[data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        flex: 1 1 calc(50% - 8px) !important;
+        min-width: calc(50% - 8px) !important;
+        width: calc(50% - 8px) !important;
+    }
 }
 ```
 

@@ -75,6 +75,11 @@ st.markdown("""
     }
     h1, h2, h3 { color: var(--text-primary); }
 
+    /* === LAYOUT GLOBAL === */
+    header[data-testid="stHeader"] { background: transparent; height: 0; }
+    header[data-testid="stHeader"]::before { display: none; }
+    .block-container { max-width: 1280px; margin: 0 auto; padding-top: 2rem; }
+
     /* === MÈTRIQUES === */
     div[data-testid="stMetric"] {
         background: var(--bg-card);
@@ -153,6 +158,22 @@ st.markdown("""
     .text-danger  { color: var(--danger); }
     .text-muted-cls { color: var(--text-muted); }
 
+    /* === INPUTS === */
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="input"] input {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        color: var(--text-primary) !important;
+        transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    div[data-baseweb="textarea"]:focus-within,
+    div[data-baseweb="input"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-soft) !important;
+        border-radius: var(--radius-md) !important;
+    }
+
     /* === RESPONSIVE MÒBIL === */
     @media (max-width: 640px) {
         div[data-testid="stMetric"] { padding: 12px 14px; }
@@ -162,12 +183,13 @@ st.markdown("""
             padding: 0 12px;
             height: 42px;
         }
-        .block-container { padding-top: 1rem !important; }
-        /* 4 columnes → 2×2 en mòbil */
-        div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
-        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-            flex: 0 0 calc(50% - 4px) !important;
-            min-width: calc(50% - 4px) !important;
+        .block-container { padding-top: 0.5rem !important; }
+        /* Grid 2×2 — afecta totes les st.columns(); st.columns(2) queda 50%/50% */
+        div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: 8px; }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 1 1 calc(50% - 8px) !important;
+            min-width: calc(50% - 8px) !important;
+            width: calc(50% - 8px) !important;
         }
     }
 </style>
