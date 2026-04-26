@@ -1,6 +1,6 @@
-streamlit
-google-generativeai
-pandas
-plotly
-Pillow
-st-gsheets-connection
+streamlit>=1.40,<2.0
+google-generativeai>=0.8,<1.0
+pandas>=2.2,<3.0
+plotly>=5.20,<6.0
+Pillow>=10.0,<12.0
+st-gsheets-connection>=0.0.5
