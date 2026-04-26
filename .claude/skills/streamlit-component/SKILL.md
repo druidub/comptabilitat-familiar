@@ -365,16 +365,16 @@ Mai posar més de 1 emoji per element. Mai emoji a noms de variable.
 
 > **Regla fonamental**: `streamlit-gsheets` (`conn.read` / `conn.update`) **no crea pestanyes ni columnes**. Qualsevol operació d'esquema (crear pestanya, afegir columna, migrar dades) requereix baixar a **gspread natiu**.
 
-### Accedir al gspread client
+### Accedir al gspread Spreadsheet
 
 ```python
 def _spreadsheet(conn):
-    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    try:
-        return conn.client.client.open_by_url(url)   # streamlit-gsheets >= 0.0.9
-    except AttributeError:
-        return conn.client._open_spreadsheet_url(url) # fallback versions anteriors
+    # API oficial de streamlit-gsheets — confirmat al repo oficial
+    # El connector ja sap quin spreadsheet és des de secrets.toml
+    return conn.client._open_spreadsheet()
 ```
+
+> `_open_spreadsheet()` és semi-privada (subratllat simple) però és el patró documentat pel propi Streamlit. No cal agafar la URL dels secrets ni usar `conn.client._client.open_by_url(...)` directament.
 
 ### Crear pestanya si no existeix
 

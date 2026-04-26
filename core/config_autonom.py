@@ -21,14 +21,8 @@ DEFAULTS: dict[str, str] = {
 
 
 def _spreadsheet(conn):
-    """Retorna l'objecte gspread Spreadsheet via l'API nativa."""
-    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    try:
-        # streamlit-gsheets >= 0.0.9: conn.client.client és el gspread.Client
-        return conn.client.client.open_by_url(url)
-    except AttributeError:
-        # fallback per a versions anteriors
-        return conn.client._open_spreadsheet_url(url)
+    """Retorna el gspread.Spreadsheet via l'API oficial del connector."""
+    return conn.client._open_spreadsheet()
 
 
 def _col_letter(n: int) -> str:
