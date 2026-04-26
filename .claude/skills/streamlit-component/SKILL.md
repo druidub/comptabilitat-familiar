@@ -360,3 +360,72 @@ Mai posar més de 1 emoji per element. Mai emoji a noms de variable.
 - ❌ Modals amb `st.dialog` per coses simples — usar `st.expander` o `st.popover`.
 - ❌ Mètriques amb >5 dígits sense format de milers.
 - ❌ `st.radio` horitzontal per a >3 opcions — usar `st.segmented_control` o pills.
+
+## Google Sheets — Operacions d'esquema
+
+> **Regla fonamental**: `streamlit-gsheets` (`conn.read` / `conn.update`) **no crea pestanyes ni columnes**. Qualsevol operació d'esquema (crear pestanya, afegir columna, migrar dades) requereix baixar a **gspread natiu**.
+
+### Accedir al gspread client
+
+```python
+def _spreadsheet(conn):
+    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    try:
+        return conn.client.client.open_by_url(url)   # streamlit-gsheets >= 0.0.9
+    except AttributeError:
+        return conn.client._open_spreadsheet_url(url) # fallback versions anteriors
+```
+
+### Crear pestanya si no existeix
+
+```python
+import gspread
+
+def _assegurar_pestanya(conn, nom: str, rows: int = 20, cols: int = 2) -> None:
+    sh = _spreadsheet(conn)
+    try:
+        sh.worksheet(nom)
+    except gspread.WorksheetNotFound:
+        sh.add_worksheet(title=nom, rows=rows, cols=cols)
+```
+
+### Afegir columna a pestanya existent
+
+```python
+def _assegurar_columna(conn, nom_col: str, valor_defecte: str = "") -> None:
+    sh = _spreadsheet(conn)
+    ws = sh.get_worksheet(0)   # pestanya principal = índex 0
+    capçaleres = ws.row_values(1)
+    if nom_col in capçaleres:
+        return
+    nova_col = len(capçaleres) + 1
+    lletra = _col_letter(nova_col)
+    ws.update_cell(1, nova_col, nom_col)
+    n_files = len(ws.get_all_values()) - 1
+    if n_files > 0:
+        ws.update(f"{lletra}2:{lletra}{n_files + 1}", [[valor_defecte]] * n_files)
+
+def _col_letter(n: int) -> str:
+    result = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+```
+
+### Pauta d'ús a app.py
+
+Cridar les funcions d'esquema **una sola vegada a l'arrencada**, just després de `conn = st.connection(...)` i **abans** de `conn.read()`:
+
+```python
+conn = st.connection("gsheets", type=GSheetsConnection)
+inicialitzar_config(conn)          # crea Config_Autonom si cal
+_assegurar_columna_aplica_iva(conn) # migració idempotent de columna
+config_autonom = carregar_config(conn)
+```
+
+### Quan NO cal gspread
+
+- Llegir dades → `conn.read(worksheet=..., ttl=N)`
+- Escriure/actualitzar dades existents → `conn.update(worksheet=..., data=df)`
+- Gspread **només** per a: crear worksheets, afegir/eliminar columnes, canviar format.

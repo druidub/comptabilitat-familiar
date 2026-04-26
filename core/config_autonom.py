@@ -1,6 +1,7 @@
 """Configuració de l'autònom — pestanya Config_Autonom de Google Sheets."""
 from __future__ import annotations
 
+import gspread
 import pandas as pd
 import streamlit as st
 
@@ -17,6 +18,53 @@ DEFAULTS: dict[str, str] = {
     "tiquet_rural_quantia": "0",
     "tiquet_rural_data_resolucio": "",
 }
+
+
+def _spreadsheet(conn):
+    """Retorna l'objecte gspread Spreadsheet via l'API nativa."""
+    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    try:
+        # streamlit-gsheets >= 0.0.9: conn.client.client és el gspread.Client
+        return conn.client.client.open_by_url(url)
+    except AttributeError:
+        # fallback per a versions anteriors
+        return conn.client._open_spreadsheet_url(url)
+
+
+def _col_letter(n: int) -> str:
+    """Índex de columna 1-based → lletra Excel (A, B, ..., Z, AA, ...)."""
+    result = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _assegurar_pestanya(conn) -> None:
+    """Crea Config_Autonom al Sheet si no existeix (operació d'esquema via gspread)."""
+    sh = _spreadsheet(conn)
+    try:
+        sh.worksheet(PESTANYA)
+    except gspread.WorksheetNotFound:
+        sh.add_worksheet(title=PESTANYA, rows=20, cols=2)
+
+
+def _assegurar_columna_aplica_iva(conn) -> None:
+    """Afegeix aplica_iva a la pestanya principal si no existeix (gspread natiu)."""
+    sh = _spreadsheet(conn)
+    ws = sh.get_worksheet(0)
+    capçaleres = ws.row_values(1)
+    if "aplica_iva" in capçaleres:
+        return
+    nova_col = len(capçaleres) + 1
+    lletra = _col_letter(nova_col)
+    ws.update_cell(1, nova_col, "aplica_iva")
+    n_files = len(ws.get_all_values()) - 1
+    if n_files > 0:
+        ws.update(
+            f"{lletra}2:{lletra}{n_files + 1}",
+            [["FALSE"]] * n_files,
+        )
 
 
 def _carregar_config_raw(conn) -> dict:
@@ -51,10 +99,11 @@ def guardar_config(conn, config: dict) -> None:
 
 
 def inicialitzar_config(conn) -> None:
-    """Crea la pestanya Config_Autonom amb defaults si no existeix o és buida."""
+    """Crea Config_Autonom (si cal) i omple els defaults."""
+    _assegurar_pestanya(conn)
     try:
         df = conn.read(worksheet=PESTANYA, ttl=0)
-        if df is not None and not df.empty:
+        if df is not None and not df.empty and "clau" in df.columns:
             return
     except Exception:
         pass

@@ -10,7 +10,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 from PIL import Image
 import uuid
-from core.config_autonom import carregar_config, inicialitzar_config
+from core.config_autonom import (
+    carregar_config, inicialitzar_config, _assegurar_columna_aplica_iva,
+)
+
+import logging
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("autonom-init")
+
+try:
+    config = carregar_config()
+    log.info(f"Config carregada: {config}")
+except Exception as e:
+    log.error(f"Error carregant config: {e}", exc_info=True)
 
 APP_VERSION = "v2.8"
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -222,6 +234,7 @@ API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 client = genai.Client(api_key=API_KEY)
 inicialitzar_config(conn)
+_assegurar_columna_aplica_iva(conn)
 config_autonom = carregar_config(conn)
 
 # --- HELPERS DE RESILIÈNCIA ---
@@ -376,17 +389,6 @@ def comprovar_recurrents_pendents(df_actual, df_config):
 # Carreguem dades globals
 df = carregar_dades()
 df_recurrents_config = carregar_recurrents()
-
-# Migració idempotent: afegir aplica_iva al Sheet principal si no hi existia
-if not st.session_state.get("_aplica_iva_ok"):
-    st.session_state["_aplica_iva_ok"] = True
-    if not df.empty:
-        try:
-            _raw = amb_reintents(conn.read, ttl=0)
-            if _raw is not None and "aplica_iva" not in _raw.columns:
-                guardar_dades(df)
-        except Exception:
-            pass
 
 # --- PROTECCIÓ DE SIGNE DE QUANTITAT (ROBUSTA) ---
 PARAULES_INGRES = {"ingrés", "ingres", "ingressos", "nòmina", "nomina", "bizum rebut", "income"}
