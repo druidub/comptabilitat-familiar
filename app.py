@@ -147,6 +147,11 @@ st.markdown("""
         margin-bottom: 12px;
     }
 
+    /* === COLORS UTILITARIS === */
+    .text-success { color: var(--success); }
+    .text-danger  { color: var(--danger); }
+    .text-muted-cls { color: var(--text-muted); }
+
     /* === RESPONSIVE MÒBIL === */
     @media (max-width: 640px) {
         div[data-testid="stMetric"] { padding: 12px 14px; }
@@ -157,6 +162,12 @@ st.markdown("""
             height: 42px;
         }
         .block-container { padding-top: 1rem !important; }
+        /* 4 columnes → 2×2 en mòbil */
+        div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+            flex: 0 0 calc(50% - 4px) !important;
+            min-width: calc(50% - 4px) !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -354,6 +365,14 @@ def corregir_signe(quantitat, tipus):
     es_ingres = tipus_norm in PARAULES_INGRES or any(p in tipus_norm for p in PARAULES_INGRES)
     return q_abs if es_ingres else -q_abs
 
+# --- ANALYTICS HELPERS ---
+def saldo_mes(df: pd.DataFrame, any_: int, mes: int) -> float:
+    if df.empty:
+        return 0.0
+    dates_dt = pd.to_datetime(df['data'], errors='coerce')
+    mask = (dates_dt.dt.year == any_) & (dates_dt.dt.month == mes)
+    return float(df.loc[mask, 'quantitat'].sum())
+
 # --- CALLBACK PER AL TEXT ---
 def processar_text_callback():
     text_val = st.session_state.get("input_text_key", "")
@@ -504,10 +523,61 @@ ingr = df_filtrat[df_filtrat['quantitat'] > 0]['quantitat'].sum() if not df_filt
 desp = df_filtrat[df_filtrat['quantitat'] < 0]['quantitat'].sum() if not df_filtrat.empty else 0.0
 saldo = df_filtrat['quantitat'].sum() if not df_filtrat.empty else 0.0
 
-col1, col2, col3 = st.columns(3)
-col1.metric("🟢 Ingressos", f"{ingr:.2f} €", delta="Mes en curs")
-col2.metric("🔴 Despeses", f"{desp:.2f} €", delta_color="inverse")
-col3.metric("💰 Saldo Disponible", f"{saldo:.2f} €")
+# --- Hero card amb delta vs període anterior ---
+if opcio_data in ("Aquest Mes", "Mes Anterior"):
+    period_mes = inici.month
+    period_any = inici.year
+    prev_mes = period_mes - 1 if period_mes > 1 else 12
+    prev_any = period_any if period_mes > 1 else period_any - 1
+    saldo_ant = saldo_mes(df, prev_any, prev_mes)
+    if saldo_ant != 0:
+        delta_eur = saldo - saldo_ant
+        delta_pct = (delta_eur / abs(saldo_ant)) * 100
+        signe = "▲" if delta_eur >= 0 else "▼"
+        cls = "text-success" if delta_eur >= 0 else "text-danger"
+        delta_html = (
+            f'<span class="{cls}" style="font-size:0.95rem;font-weight:600">'
+            f'{signe} {delta_eur:+,.2f} € ({delta_pct:+.1f}%)</span>'
+        )
+    else:
+        delta_html = '<span class="text-muted-cls" style="font-size:0.9rem">Sense dades del mes anterior</span>'
+else:
+    delta_html = '<span class="text-muted-cls" style="font-size:0.9rem">—</span>'
+
+st.markdown(
+    f'<div class="custom-card accent" style="text-align:center;padding:28px 24px;margin-bottom:20px;">'
+    f'<div class="card-title">💰 Saldo del Període</div>'
+    f'<div style="font-size:2.8rem;font-weight:700;font-variant-numeric:tabular-nums;margin:8px 0;">'
+    f'{saldo:,.2f} €</div>'
+    f'<div style="margin-top:6px;">{delta_html}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+# --- 4 mètriques ---
+taxa_estalvi = ((ingr + desp) / ingr * 100) if ingr > 0 else None
+
+avui_metrics = date.today()
+if avui_metrics.month == 12:
+    ultim_dia_mes = date(avui_metrics.year + 1, 1, 1) - timedelta(days=1)
+else:
+    ultim_dia_mes = date(avui_metrics.year, avui_metrics.month + 1, 1) - timedelta(days=1)
+dies_restants = (ultim_dia_mes - avui_metrics).days
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("🟢 Ingressos", f"{ingr:,.2f} €")
+col2.metric("🔴 Despeses", f"{abs(desp):,.2f} €")
+if taxa_estalvi is not None:
+    delta_avis = "⚠ Gastes més del que ingressos" if taxa_estalvi < 0 else None
+    col3.metric("💎 Taxa Estalvi", f"{taxa_estalvi:.1f}%",
+                delta=delta_avis, delta_color="inverse" if taxa_estalvi < 0 else "normal")
+else:
+    col3.metric("💎 Taxa Estalvi", "—")
+if opcio_data == "Aquest Mes":
+    col4.metric("📅 Dies Restants", f"{dies_restants} dies")
+else:
+    dies_periode = (fi - inici).days + 1
+    col4.metric("📅 Durada", f"{dies_periode} dies")
 
 st.markdown("<br>", unsafe_allow_html=True)
 vista_grafic = st.radio("Visualització:", ["Evolució Saldo", "Despeses per Categoria", "Detall Ingressos"], horizontal=True)
