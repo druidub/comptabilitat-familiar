@@ -18,42 +18,143 @@ MAX_IMG_BYTES = 5 * 1024 * 1024
 # --- 1. CONFIGURACIÓ DE PÀGINA I ESTILS PREMIUM ---
 st.set_page_config(page_title=f"Família Finances {APP_VERSION}", page_icon="🏦", layout="wide")
 
-# CSS CUSTOM
+# CSS CUSTOM — Sistema de disseny complet (Fase 1)
 st.markdown("""
 <style>
+    /* === VARIABLES DE PALETA === */
+    :root {
+        --bg-card: #ffffff;
+        --bg-card-hover: #f8f9fb;
+        --bg-subtle: #f3f4f6;
+        --border: #e5e7eb;
+        --text-primary: #111827;
+        --text-secondary: #6b7280;
+        --text-muted: #9ca3af;
+        --accent: #6366f1;
+        --accent-soft: #eef2ff;
+        --success: #10b981;
+        --success-soft: #d1fae5;
+        --danger: #ef4444;
+        --danger-soft: #fee2e2;
+        --warning: #f59e0b;
+        --warning-soft: #fef3c7;
+        --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+        --shadow-md: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
+        --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --transition: 0.15s ease;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg-card: #1f2937;
+            --bg-card-hover: #252f3f;
+            --bg-subtle: #111827;
+            --border: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #818cf8;
+            --accent-soft: #312e81;
+            --success-soft: #064e3b;
+            --danger-soft: #7f1d1d;
+            --warning-soft: #78350f;
+            --shadow-md: 0 1px 3px rgba(0,0,0,0.3);
+            --shadow-lg: 0 4px 12px rgba(0,0,0,0.4);
+        }
+    }
+
+    /* === TIPOGRAFIA === */
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                     "Helvetica Neue", Arial, sans-serif;
+        font-feature-settings: "kern", "liga", "tnum";
+    }
+    h1, h2, h3 { color: var(--text-primary); }
+
+    /* === MÈTRIQUES === */
     div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        padding: 15px 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        color: #333;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        padding: 18px 22px;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-md);
+        transition: transform var(--transition), box-shadow var(--transition);
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
     }
     div[data-testid="stMetricLabel"] {
-        color: #666;
-        font-size: 0.9rem;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
     }
     div[data-testid="stMetricValue"] {
-        color: #1f1f1f;
+        color: var(--text-primary);
         font-weight: 700;
+        font-size: 1.6rem;
+        font-variant-numeric: tabular-nums;
     }
-    h1, h2, h3 {
-        color: #2c3e50;
-    }
+
+    /* === PESTANYES === */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
+        gap: 8px;
+        border-bottom: 1px solid var(--border);
     }
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 4px;
-        color: #555;
+        height: 48px;
+        background: transparent;
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+        color: var(--text-secondary);
         font-weight: 600;
+        transition: all var(--transition);
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: var(--text-primary);
+        background: var(--bg-subtle);
     }
     .stTabs [aria-selected="true"] {
-        background-color: #f0f2f6;
-        color: #000;
+        background: var(--accent-soft);
+        color: var(--accent);
+    }
+
+    /* === CARDS PERSONALITZADES === */
+    .custom-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 20px 24px;
+        box-shadow: var(--shadow-md);
+        margin-bottom: 12px;
+    }
+    .custom-card.accent {
+        background: linear-gradient(135deg, var(--accent-soft) 0%, var(--bg-card) 100%);
+        border-color: var(--accent);
+    }
+    .custom-card .card-title {
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+        margin-bottom: 12px;
+    }
+
+    /* === RESPONSIVE MÒBIL === */
+    @media (max-width: 640px) {
+        div[data-testid="stMetric"] { padding: 12px 14px; }
+        div[data-testid="stMetricValue"] { font-size: 1.3rem !important; }
+        .stTabs [data-baseweb="tab"] {
+            font-size: 0.85rem;
+            padding: 0 12px;
+            height: 42px;
+        }
+        .block-container { padding-top: 1rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -423,7 +524,7 @@ if not df_filtrat.empty:
             fig = px.pie(df_desp, values='valor', names='categoria', title="On van els diners?", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
             st.plotly_chart(fig, width="stretch")
         else:
-            st.info("No hi ha despeses per mostrar en aquest període.")
+            st.info("📊 Cap despesa en aquest període. Afegeix moviments o canvia el filtre de dates.")
         
     elif vista_grafic == "Detall Ingressos":
         df_ing = df_filtrat[df_filtrat['quantitat'] > 0]
@@ -431,7 +532,7 @@ if not df_filtrat.empty:
             fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte', title="Fonts d'Ingrés")
             st.plotly_chart(fig, width="stretch")
         else:
-            st.info("No hi ha ingressos per mostrar en aquest període.")
+            st.info("💰 Cap ingrés en aquest període. Afegeix moviments o canvia el filtre de dates.")
 
 # =================================================
 # 2. PESTANYES
@@ -623,4 +724,4 @@ with t4:
             st.success("Dades guardades!")
             st.rerun()
     else:
-        st.info("No hi ha dades per editar.")
+        st.info("📭 Cap moviment per editar. Canvia el filtre o afegeix dades primer.")
