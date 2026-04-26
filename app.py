@@ -7,6 +7,7 @@ import time
 import pandas as pd
 from datetime import datetime, date, timedelta
 import plotly.express as px
+import plotly.graph_objects as go
 from PIL import Image
 import uuid
 
@@ -373,6 +374,19 @@ def saldo_mes(df: pd.DataFrame, any_: int, mes: int) -> float:
     mask = (dates_dt.dt.year == any_) & (dates_dt.dt.month == mes)
     return float(df.loc[mask, 'quantitat'].sum())
 
+def aplicar_tema(fig: go.Figure, titol: str = "") -> go.Figure:
+    fig.update_layout(
+        title=dict(text=titol, font=dict(size=16, color="#111827")),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="-apple-system, Inter, sans-serif", size=12),
+        margin=dict(l=10, r=10, t=40, b=10),
+        xaxis=dict(gridcolor="#e5e7eb", zerolinecolor="#e5e7eb"),
+        yaxis=dict(gridcolor="#e5e7eb", zerolinecolor="#e5e7eb"),
+        hoverlabel=dict(bgcolor="#1f2937", font_color="white"),
+    )
+    return fig
+
 # --- CALLBACK PER AL TEXT ---
 def processar_text_callback():
     text_val = st.session_state.get("input_text_key", "")
@@ -579,37 +593,41 @@ else:
     dies_periode = (fi - inici).days + 1
     col4.metric("📅 Durada", f"{dies_periode} dies")
 
-st.markdown("<br>", unsafe_allow_html=True)
-vista_grafic = st.radio("Visualització:", ["Evolució Saldo", "Despeses per Categoria", "Detall Ingressos"], horizontal=True)
+vista_grafic = st.segmented_control(
+    "Visualització:",
+    ["Evolució Saldo", "Despeses per Categoria", "Detall Ingressos"],
+    default="Evolució Saldo",
+    label_visibility="collapsed",
+)
 
 if not df_filtrat.empty:
     if vista_grafic == "Evolució Saldo":
         ev = df_filtrat.groupby('data')['quantitat'].sum().reset_index()
         ev['saldo_acumulat'] = ev['quantitat'].cumsum()
-        fig = px.bar(ev, x='data', y='quantitat', color='quantitat', title="Flux Diari", color_continuous_scale=px.colors.diverging.RdYlGn)
-        st.plotly_chart(fig, width="stretch")
-        
+        fig = px.bar(ev, x='data', y='quantitat', color='quantitat', color_continuous_scale=px.colors.diverging.RdYlGn)
+        st.plotly_chart(aplicar_tema(fig, "Flux Diari"), width="stretch")
+
     elif vista_grafic == "Despeses per Categoria":
         df_desp = df_filtrat[df_filtrat['quantitat'] < 0].copy()
         if not df_desp.empty:
             df_desp['valor'] = df_desp['quantitat'].abs()
-            fig = px.pie(df_desp, values='valor', names='categoria', title="On van els diners?", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig, width="stretch")
+            fig = px.pie(df_desp, values='valor', names='categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(aplicar_tema(fig, "On van els diners?"), width="stretch")
         else:
             st.info("📊 Cap despesa en aquest període. Afegeix moviments o canvia el filtre de dates.")
-        
+
     elif vista_grafic == "Detall Ingressos":
         df_ing = df_filtrat[df_filtrat['quantitat'] > 0]
         if not df_ing.empty:
-            fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte', title="Fonts d'Ingrés")
-            st.plotly_chart(fig, width="stretch")
+            fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte')
+            st.plotly_chart(aplicar_tema(fig, "Fonts d'Ingrés"), width="stretch")
         else:
             st.info("💰 Cap ingrés en aquest període. Afegeix moviments o canvia el filtre de dates.")
 
 # =================================================
 # 2. PESTANYES
 # =================================================
-t1, t2, t3, t4 = st.tabs(["➕ Afegir Moviment", "🧠 Assessoria IA", "⚙️ Configurar Recurrents", "✏️ Editar Dades"])
+t1, t2, t3, t4 = st.tabs(["➕ Afegir Moviment", "✏️ Editar Dades", "🧠 Assessoria IA", "⚙️ Configurar Recurrents"])
 
 # --- TAB 1: INPUT ---
 with t1:
@@ -716,8 +734,8 @@ Regles:
             if noves_total:
                 st.rerun()
 
-# --- TAB 2: ASSESSORIA ESTRATÈGICA ---
-with t2:
+# --- TAB 3: ASSESSORIA ESTRATÈGICA ---
+with t3:
     st.subheader("🧠 L'Assessor de la Família")
     st.info("Context familiar: Jose Manuel a punt de ser autònom (800–1.000€/mes), Alba nòmina ~1.300€/mes, lloguer rebut 550€/mes.")
     if st.button("Generar Anàlisi del Mes"):
@@ -762,8 +780,8 @@ NO incloguis: introduccions, salutacions, disclaimers, "espero que t'ajudi".
             except Exception as e:
                 st.error(f"Error connectant amb l'assessor: {str(e)[:200]}")
 
-# --- TAB 3: CONFIGURAR RECURRENTS ---
-with t3:
+# --- TAB 4: CONFIGURAR RECURRENTS ---
+with t4:
     st.write("Configura els pagaments fixos. Ara pots triar la freqüència.")
     df_config_editat = st.data_editor(
         df_recurrents_config,
@@ -784,8 +802,8 @@ with t3:
         st.success("Configuració actualitzada!")
         st.rerun()
 
-# --- TAB 4: EDITAR DADES ---
-with t4:
+# --- TAB 2: EDITAR DADES ---
+with t2:
     if not df.empty:
         df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
         df_editat = st.data_editor(df_per_editar, num_rows="dynamic", width="stretch", key="main_editor")
