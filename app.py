@@ -858,10 +858,12 @@ with t5:
     if _preview:
         _alta_prev_date = _cfg.get("data_alta_prevista")
         _alta_prev = _alta_prev_date.isoformat() if _alta_prev_date else "—"
+        _manual_url = "https://github.com/druidub/comptabilitat-familiar/blob/main/docs/MANUAL_AUTONOM.md"
         st.markdown(
-            f'<div class="custom-card accent" style="margin-bottom:16px;">'
-            f'<span style="font-size:1.1rem;font-weight:700;">🔮 Mode Preview</span>'
-            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta prevista el {_alta_prev}</span>'
+            f'<div class="custom-card accent" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">'
+            f'<div><span style="font-size:1.1rem;font-weight:700;">🔮 Mode Preview</span>'
+            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta prevista el {_alta_prev}</span></div>'
+            f'<a href="{_manual_url}" target="_blank" style="font-size:0.8rem;color:var(--text-secondary);text-decoration:none;white-space:nowrap;">📖 Manual</a>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -949,10 +951,12 @@ with t5:
         _buffers = calcular_buffers_trimestre(_movs_freelance, _trim_actual, _any_actual,
                                               cuota_ss_mensual=_quota_op)
 
+        _manual_url = "https://github.com/druidub/comptabilitat-familiar/blob/main/docs/MANUAL_AUTONOM.md"
         st.markdown(
-            f'<div class="custom-card accent" style="margin-bottom:16px;">'
-            f'<span style="font-size:1.1rem;font-weight:700;">🟢 Mode Operatiu</span>'
-            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta el {_alta_real_str}</span>'
+            f'<div class="custom-card accent" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">'
+            f'<div><span style="font-size:1.1rem;font-weight:700;">🟢 Mode Operatiu</span>'
+            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta el {_alta_real_str}</span></div>'
+            f'<a href="{_manual_url}" target="_blank" style="font-size:0.8rem;color:var(--text-secondary);text-decoration:none;white-space:nowrap;">📖 Manual</a>'
             f'</div>',
             unsafe_allow_html=True,
         )
