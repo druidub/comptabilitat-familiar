@@ -189,7 +189,7 @@ cols = st.columns(len(opcions))
 for col, op in zip(cols, opcions):
     actiu = st.session_state.vista_grafic == op
     if col.button(op, type="primary" if actiu else "secondary",
-                  use_container_width=True, key=f"pill_{op}"):
+                  width="stretch", key=f"pill_{op}"):
         st.session_state.vista_grafic = op
         st.rerun()
 ```
@@ -264,7 +264,7 @@ def aplicar_tema(fig: go.Figure, titol: str = "") -> go.Figure:
     return fig
 ```
 
-Cridar `st.plotly_chart(aplicar_tema(fig, "Títol"), use_container_width=True)`.
+Cridar `st.plotly_chart(aplicar_tema(fig, "Títol"), width="stretch")`.
 
 ## Empty states
 
@@ -285,7 +285,7 @@ Streamlit per defecte ja és correcte. Regles:
 - **Botó primari** (`type="primary"`) només per a accions principals (Guardar, Processar, Generar).
 - **Botó secundari** (per defecte) per a accions auxiliars (Cancel·lar, Tancar Sessió).
 - **Botó destructiu**: usar emoji 🗑 + secondary, o color amb CSS si cal.
-- Sempre `use_container_width=True` quan estiguin dins de `st.columns`.
+- Sempre `width="stretch"` quan estiguin dins de `st.columns`.
 
 ## Iconografia
 

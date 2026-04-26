@@ -1,6 +1,7 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 import time
 import pandas as pd
@@ -81,8 +82,7 @@ if not check_password():
 # --- CONNEXIONS ---
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel(GEMINI_MODEL)
+client = genai.Client(api_key=API_KEY)
 
 # --- HELPERS DE RESILIÈNCIA ---
 def amb_reintents(fn, *args, intents=3, base=1.0, **kwargs):
@@ -265,7 +265,7 @@ def processar_text_callback():
     )
 
     try:
-        res = amb_reintents(model.generate_content, [prompt_comu, text_val])
+        res = amb_reintents(client.models.generate_content, model=GEMINI_MODEL, contents=[prompt_comu, text_val])
         dades = parsejar_json_ia(res.text)
 
         noves = []
@@ -414,14 +414,14 @@ if not df_filtrat.empty:
         ev = df_filtrat.groupby('data')['quantitat'].sum().reset_index()
         ev['saldo_acumulat'] = ev['quantitat'].cumsum()
         fig = px.bar(ev, x='data', y='quantitat', color='quantitat', title="Flux Diari", color_continuous_scale=px.colors.diverging.RdYlGn)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         
     elif vista_grafic == "Despeses per Categoria":
         df_desp = df_filtrat[df_filtrat['quantitat'] < 0].copy()
         if not df_desp.empty:
             df_desp['valor'] = df_desp['quantitat'].abs()
             fig = px.pie(df_desp, values='valor', names='categoria', title="On van els diners?", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No hi ha despeses per mostrar en aquest període.")
         
@@ -429,7 +429,7 @@ if not df_filtrat.empty:
         df_ing = df_filtrat[df_filtrat['quantitat'] > 0]
         if not df_ing.empty:
             fig = px.bar(df_ing, x='categoria', y='quantitat', color='concepte', title="Fonts d'Ingrés")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No hi ha ingressos per mostrar en aquest període.")
 
@@ -483,7 +483,7 @@ Regles:
             cols_prev = st.columns(min(len(imatges), 4))
             for i, img_file in enumerate(imatges[:4]):
                 with cols_prev[i]:
-                    st.image(img_file, use_container_width=True)
+                    st.image(img_file, width="stretch")
             if len(imatges) > 4:
                 st.caption(f"... i {len(imatges) - 4} més sense previsualitzar")
 
@@ -504,7 +504,7 @@ Regles:
 
                 try:
                     img_p = Image.open(im)
-                    res = amb_reintents(model.generate_content, [prompt_foto, img_p])
+                    res = amb_reintents(client.models.generate_content, model=GEMINI_MODEL, contents=[prompt_foto, img_p])
                     dades = parsejar_json_ia(res.text)
 
                     grup = "IMG_" + str(uuid.uuid4())[:8]
@@ -584,7 +584,7 @@ FORMAT:
 NO incloguis: introduccions, salutacions, disclaimers, "espero que t'ajudi".
 """
             try:
-                res_adv = amb_reintents(model.generate_content, prompt_advisor)
+                res_adv = amb_reintents(client.models.generate_content, model=GEMINI_MODEL, contents=prompt_advisor)
                 st.markdown(res_adv.text)
             except Exception as e:
                 st.error(f"Error connectant amb l'assessor: {str(e)[:200]}")
@@ -595,7 +595,7 @@ with t3:
     df_config_editat = st.data_editor(
         df_recurrents_config,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         column_config={
             "concepte": st.column_config.TextColumn("Concepte", required=True),
             "quantitat": st.column_config.NumberColumn("€", required=True, format="%.2f €"),
@@ -615,7 +615,7 @@ with t3:
 with t4:
     if not df.empty:
         df_per_editar = df_filtrat.sort_values(by='data', ascending=False)
-        df_editat = st.data_editor(df_per_editar, num_rows="dynamic", use_container_width=True, key="main_editor")
+        df_editat = st.data_editor(df_per_editar, num_rows="dynamic", width="stretch", key="main_editor")
         if st.button("💾 Guardar Canvis Taula"):
             mask_fora = (df['data'] < inici) | (df['data'] > fi)
             df_final = pd.concat([df.loc[mask_fora], df_editat], ignore_index=True)
