@@ -157,13 +157,15 @@ if mobile_or_responsive:  # detecció heurística pels filtres elegits
     font-weight: 600;
     transition: all var(--transition);
 }
-.stTabs [data-baseweb="tab"]:hover {
+.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: var(--text-primary);
     background: var(--bg-subtle);
 }
 .stTabs [aria-selected="true"] {
     background: var(--accent-soft);
-    color: var(--accent);
+    color: var(--text-primary);
+    font-weight: 700;
+    box-shadow: inset 0 -2px 0 var(--accent);
 }
 ```
 
