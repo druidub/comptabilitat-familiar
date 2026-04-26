@@ -155,7 +155,9 @@ inicialitzar_pressupostos(conn)
 pressupostos = carregar_pressupostos(conn)
 ```
 
-`df_mes_actual` és el DataFrame filtrat per any/mes actual, columnes `categoria` i `import` (imports de despeses, valors negatius o positius — `calcular_estats_categoria` usa `abs()`).
+`df_mes_actual` és el DataFrame filtrat per any/mes actual amb columnes `categoria` i **`quantitat`** (valors negatius per despeses — `calcular_estats_categoria` usa `abs()`).
+
+> **Convenció estable del projecte**: la columna d'import dels moviments es diu sempre `quantitat`, mai `import`. La columna `import_mensual` existeix únicament a la pestanya `Pressupostos` de Sheets. No confondre les dues.
 
 ## Què no fer
 

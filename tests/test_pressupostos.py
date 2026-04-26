@@ -58,7 +58,7 @@ def test_ratio_calcul_correcte():
 
 def test_calcular_estats_categories_buides():
     from datetime import date
-    df = pd.DataFrame(columns=["categoria", "import"])
+    df = pd.DataFrame(columns=["categoria", "quantitat"])
     pressupostos = {cat: 200.0 for cat in CATEGORIES_DESPESA}
     estats = calcular_estats_categoria(df, pressupostos, date(2026, 4, 15))
     # Tots han de tenir pct_consumit == 0.0 i estat verd (0% / ~48% esperat = ratio 0)
@@ -70,8 +70,8 @@ def test_calcular_estats_categories_buides():
 def test_calcular_estats_categoria_amb_dades():
     from datetime import date
     df = pd.DataFrame([
-        {"categoria": "Alimentació", "import": -80.0},
-        {"categoria": "Transport", "import": -10.0},
+        {"categoria": "Alimentació", "quantitat": -80.0},
+        {"categoria": "Transport", "quantitat": -10.0},
     ])
     pressupostos = {"Alimentació": 100.0, "Transport": 100.0}
     # Dia 15 d'abril (30 dies) → 50% esperat
@@ -84,7 +84,7 @@ def test_calcular_estats_categoria_amb_dades():
 
 def test_calcular_estats_categoria_sense_pressupost():
     from datetime import date
-    df = pd.DataFrame([{"categoria": "Oci", "import": -50.0}])
+    df = pd.DataFrame([{"categoria": "Oci", "quantitat": -50.0}])
     pressupostos = {cat: 0.0 for cat in CATEGORIES_DESPESA}
     estats = calcular_estats_categoria(df, pressupostos, date(2026, 4, 15))
     assert estats["Oci"]["estat"] == "sense_pressupost"

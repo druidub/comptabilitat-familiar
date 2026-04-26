@@ -145,7 +145,7 @@ def calcular_estats_categoria(
     despeses_per_cat: dict[str, float] = {}
     if not df_mes_actual.empty and "categoria" in df_mes_actual.columns:
         for cat, grup in df_mes_actual.groupby("categoria"):
-            despeses_per_cat[str(cat)] = abs(float(grup["import"].sum()))
+            despeses_per_cat[str(cat)] = abs(float(grup["quantitat"].sum()))
 
     return {
         cat: estat_pressupost(
