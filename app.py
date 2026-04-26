@@ -11,7 +11,13 @@ import plotly.graph_objects as go
 from PIL import Image
 import uuid
 from core.config_autonom import (
-    carregar_config, inicialitzar_config, _assegurar_columna_aplica_iva,
+    carregar_config, guardar_config, inicialitzar_config,
+    _assegurar_columna_aplica_iva, es_mode_preview,
+)
+from core.autonom import (
+    tram_actual, calcular_quota_ss, calcular_provisio_freelance,
+    calcular_buffers_trimestre, tarifa_plana_estat, proxim_venciment,
+    trimestre_de, TARIFA_PLANA_AMB_MEI,
 )
 
 import logging
@@ -671,7 +677,7 @@ if not df_filtrat.empty:
 # =================================================
 # 2. PESTANYES
 # =================================================
-t1, t2, t3, t4 = st.tabs(["➕ Afegir Moviment", "✏️ Editar Dades", "🧠 Assessoria IA", "⚙️ Configurar Recurrents"])
+t1, t2, t5, t3, t4 = st.tabs(["➕ Afegir Moviment", "✏️ Editar Dades", "🧾 Autònom", "🧠 Assessoria IA", "⚙️ Configurar Recurrents"])
 
 # --- TAB 1: INPUT ---
 with t1:
@@ -846,6 +852,262 @@ with t4:
         guardar_recurrents(df_config_editat)
         st.success("Configuració actualitzada!")
         st.rerun()
+
+# --- TAB 5: AUTÒNOM ---
+with t5:
+    _cfg = carregar_config(conn)
+    _preview = es_mode_preview(_cfg)
+
+    _factures_mes = int(_cfg.get("factures_aprox_mes", 4) or 4)
+    _retencio = float(_cfg.get("retencio_irpf_pct", 0.15) or 0.15)
+    _iva_def = _cfg.get("iva_per_defecte", "TRUE").upper() == "TRUE"
+    _prorrogada = _cfg.get("tarifa_plana_prorrogada", "FALSE").upper() == "TRUE"
+
+    # ── HEADER CARD ────────────────────────────────────────────────────
+    if _preview:
+        _alta_prev = _cfg.get("data_alta_prevista", "—")
+        st.markdown(
+            f'<div class="custom-card accent" style="margin-bottom:16px;">'
+            f'<span style="font-size:1.1rem;font-weight:700;">🔮 Mode Preview</span>'
+            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta prevista el {_alta_prev}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── SIMULADOR ──────────────────────────────────────────────────
+        _ingres_mes = st.slider(
+            "Ingressos mensuals previstos (€)", min_value=500, max_value=3000,
+            step=100, value=1000,
+        )
+        _tram = tram_actual(_ingres_mes)
+        _provisio = calcular_provisio_freelance(
+            _ingres_mes / _factures_mes,
+            aplica_iva=_iva_def,
+            retencio_irpf_pct=_retencio,
+            cuota_ss_mensual=TARIFA_PLANA_AMB_MEI,
+            factures_aprox_mes=_factures_mes,
+        )
+
+        # Data salt quota
+        try:
+            from datetime import date as _date_cls
+            _d_alta_prev = _date_cls.fromisoformat(_alta_prev)
+            _any_salt = _d_alta_prev.year + (_d_alta_prev.month + 11) // 12
+            _mes_salt = (_d_alta_prev.month + 11) % 12 + 1
+            _salt_label = f"salt el {_date_cls(_any_salt, _mes_salt, 1).strftime('%b %Y')}"
+        except Exception:
+            _salt_label = "salt al mes 13"
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("📊 Tram estimat", f"Tram {_tram.numero}",
+                   delta=f"{_tram.limit_inferior:,.0f}–{_tram.limit_superior if _tram.limit_superior != float('inf') else '∞':,.0f} €/mes",
+                   delta_color="off")
+        mc2.metric("💚 Quota tarifa plana", f"{TARIFA_PLANA_AMB_MEI:.2f} €/mes",
+                   delta="12 mesos", delta_color="off")
+        mc3.metric("📈 Quota després", f"{_tram.quota_minima:.0f} €/mes",
+                   delta=f"⚠ {_salt_label}", delta_color="inverse")
+        mc4.metric("💰 Net per factura", f"{_provisio.net_disponible:,.2f} €",
+                   delta=f"base {_ingres_mes / _factures_mes:,.0f} €", delta_color="off")
+
+        # ── DETALL PROVISIÓ ────────────────────────────────────────────
+        st.markdown('<div class="custom-card" style="margin-top:12px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-title">Provisió per factura mitjana</div>', unsafe_allow_html=True)
+        _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+        _dc1.metric("IVA repercutit", f"{_provisio.iva_repercutit:,.2f} €")
+        _dc2.metric("IRPF a apartar", f"{_provisio.irpf_provisio:,.2f} €")
+        _dc3.metric("SS proporcional", f"{_provisio.cuota_ss_provisio:,.2f} €")
+        _dc4.metric("Net disponible", f"{_provisio.net_disponible:,.2f} €")
+        st.caption("⚠ Xifres orientatives. Valida amb gestor per a decisions reals.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        # ── MODE OPERATIU ──────────────────────────────────────────────
+        _alta_real_str = _cfg.get("data_alta_real", "")
+        try:
+            from datetime import date as _date_cls
+            _data_alta = _date_cls.fromisoformat(_alta_real_str)
+        except Exception:
+            _data_alta = date.today()
+
+        _estat_tp = tarifa_plana_estat(_data_alta, prorroga_activa=_prorrogada)
+        _trim_actual = trimestre_de(date.today())
+        _any_actual = date.today().year
+
+        # Tram basat en últims 3 mesos de Freelance
+        _df_freelance = df[df['categoria'] == 'Freelance'].copy() if not df.empty else pd.DataFrame()
+        if not _df_freelance.empty and len(_df_freelance) >= 3:
+            _ingressos_3m = _df_freelance.nlargest(3, 'data')['quantitat'].abs().mean() if not _df_freelance.empty else 0
+            _tram_op = tram_actual(float(_ingressos_3m))
+            _tram_label = f"Tram {_tram_op.numero}"
+            _tram_delta = "basat en historial"
+        else:
+            _tram_op = tram_actual(800.0)
+            _tram_label = "Tram 1–2"
+            _tram_delta = "sense historial suficient"
+
+        _quota_op = TARIFA_PLANA_AMB_MEI if _estat_tp["activa"] else _tram_op.quota_minima
+        _vtrim, _vdata, _vdies = proxim_venciment()
+
+        # Buffers del trimestre
+        _movs_freelance = []
+        if not df.empty and 'categoria' in df.columns:
+            for _, _r in df[df['categoria'] == 'Freelance'].iterrows():
+                _movs_freelance.append({
+                    "data": _r['data'],
+                    "quantitat": abs(float(_r['quantitat'])),
+                    "aplica_iva": bool(_r.get('aplica_iva', _iva_def)),
+                    "retencio_pct": _retencio,
+                })
+        _buffers = calcular_buffers_trimestre(_movs_freelance, _trim_actual, _any_actual,
+                                              cuota_ss_mensual=_quota_op)
+
+        st.markdown(
+            f'<div class="custom-card accent" style="margin-bottom:16px;">'
+            f'<span style="font-size:1.1rem;font-weight:700;">🟢 Mode Operatiu</span>'
+            f'<span style="color:var(--text-secondary);margin-left:12px;">Alta el {_alta_real_str}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        oc1, oc2, oc3, oc4 = st.columns(4)
+        if _estat_tp["activa"]:
+            oc1.metric("💚 Tarifa plana", f"{_estat_tp['mesos_restants']}/12 mesos",
+                       delta=f"fi: {_estat_tp['data_fi'].strftime('%b %Y')}", delta_color="off")
+        else:
+            oc1.metric("💚 Tarifa plana", "Acabada",
+                       delta=f"quota: {_tram_op.quota_minima:.0f} €/mes", delta_color="inverse")
+        oc2.metric("📊 Tram actual", _tram_label, delta=_tram_delta, delta_color="off")
+        oc3.metric("🏦 Apartat Q" + str(_trim_actual),
+                   f"{_buffers.iva_acumulat + _buffers.irpf_acumulat + _buffers.ss_acumulat:,.2f} €",
+                   delta=f"{_buffers.nombre_factures} factures", delta_color="off")
+        oc4.metric("📅 Pròxim venciment", _vdata.strftime("%d/%m/%Y"),
+                   delta=f"{_vdies} dies · Q{_vtrim}", delta_color="off")
+
+        # ── BUFFERS AMB PROGRESS BARS ──────────────────────────────────
+        st.markdown("---")
+        if _buffers.nombre_factures == 0:
+            st.info("📭 Encara no hi ha factures Freelance aquest trimestre.")
+        else:
+            st.markdown("**Buffers acumulats — Q" + str(_trim_actual) + f" {_any_actual}**")
+            _obj_iva = _quota_op * 3 * 0.21 / 0.314 if _quota_op > 0 else _buffers.total_ingressos * 0.21
+            _obj_iva = _buffers.total_ingressos * 0.21
+            _obj_irpf = _buffers.total_ingressos * 0.20
+            _obj_ss = _quota_op * 3
+
+            def _progress_color(actual, objectiu):
+                if objectiu <= 0:
+                    return 1.0, "🟢"
+                pct = actual / objectiu
+                if pct >= 1.0:
+                    return 1.0, "🟢"
+                elif pct >= 0.70:
+                    return pct, "🟡"
+                else:
+                    return pct, "🔴"
+
+            _pct_iva, _ic_iva = _progress_color(_buffers.iva_acumulat, _obj_iva)
+            _pct_irpf, _ic_irpf = _progress_color(_buffers.irpf_acumulat, _obj_irpf)
+            _pct_ss, _ic_ss = _progress_color(_buffers.ss_acumulat, _obj_ss)
+
+            st.markdown(f"{_ic_iva} **IVA acumulat:** {_buffers.iva_acumulat:,.2f} € / objectiu {_obj_iva:,.2f} €")
+            st.progress(min(_pct_iva, 1.0))
+            st.markdown(f"{_ic_irpf} **IRPF acumulat:** {_buffers.irpf_acumulat:,.2f} € / objectiu {_obj_irpf:,.2f} €")
+            st.progress(min(_pct_irpf, 1.0))
+            st.markdown(f"{_ic_ss} **SS acumulada:** {_buffers.ss_acumulat:,.2f} € / objectiu {_obj_ss:,.2f} €")
+            st.progress(min(_pct_ss, 1.0))
+            st.caption("⚠ Xifres orientatives. Valida amb gestor.")
+
+    # ── TIQUET RURAL ───────────────────────────────────────────────────
+    _tr_estat = _cfg.get("tiquet_rural_estat", "no_aplica")
+    if _tr_estat and _tr_estat != "no_aplica":
+        st.markdown("---")
+        _tr_quantia = float(_cfg.get("tiquet_rural_quantia", 0) or 0)
+        _tr_data_res = _cfg.get("tiquet_rural_data_resolucio", "") or "—"
+
+        if _tr_estat in ("concedit", "pagat"):
+            _tr_bg = "var(--success-soft)"
+            _tr_border = "var(--success)"
+            _tr_icon = "✅"
+            _tr_avís = (
+                "⚠️ Aquest ajut tributa com a guany patrimonial a IRPF, "
+                "no com a rendiment d'activitat. No s'inclou al càlcul del tram d'autònom. "
+                "Consulta amb gestor per al model adequat de declaració."
+            )
+        elif _tr_estat == "denegat":
+            _tr_bg = "var(--bg-subtle)"
+            _tr_border = "var(--border)"
+            _tr_icon = "❌"
+            _tr_avís = "Pots tornar a presentar-te a la propera convocatòria."
+        else:
+            _tr_bg = "var(--bg-subtle)"
+            _tr_border = "var(--border)"
+            _tr_icon = "🕐"
+            _tr_avís = f"Resolució prevista: {_tr_data_res}"
+
+        st.markdown(
+            f'<div class="custom-card" style="background:{_tr_bg};border-color:{_tr_border};margin-top:8px;">'
+            f'<div class="card-title">Tiquet Rural</div>'
+            f'<p style="margin:0 0 8px;font-weight:600;">{_tr_icon} Estat: {_tr_estat.replace("_"," ").capitalize()}'
+            + (f' · {_tr_quantia:,.0f} €' if _tr_quantia > 0 else '') +
+            f'</p><p style="margin:0;font-size:0.9rem;color:var(--text-secondary);">{_tr_avís}</p>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── CONFIGURACIÓ EDITABLE ──────────────────────────────────────────
+    with st.expander("⚙️ Configuració d'autònom"):
+        with st.form("form_config_autonom"):
+            _f_alta_prev = st.date_input(
+                "Data d'alta prevista",
+                value=date.fromisoformat(_cfg.get("data_alta_prevista", "2026-09-01")),
+            )
+            _f_donat = st.checkbox(
+                "Ja estic donat d'alta", value=not _preview
+            )
+            _f_alta_real = st.date_input(
+                "Data d'alta real",
+                value=date.fromisoformat(_cfg["data_alta_real"]) if _cfg.get("data_alta_real") else date.today(),
+                disabled=not _f_donat,
+            )
+            _f_prorrogada = st.checkbox("Tarifa plana prorrogada (2n any)", value=_prorrogada)
+            _f_iva = st.checkbox("IVA per defecte als ingressos", value=_iva_def)
+            _f_factures = st.number_input("Factures aproximades/mes", min_value=1, max_value=10,
+                                          value=_factures_mes)
+            _f_retencio = st.selectbox(
+                "Retenció IRPF habitual",
+                options=["0%", "7%", "15%"],
+                index=["0%", "7%", "15%"].index(f"{int(_retencio*100)}%") if f"{int(_retencio*100)}%" in ["0%","7%","15%"] else 2,
+            )
+            _f_tr_estat = st.selectbox(
+                "Tiquet Rural — estat",
+                options=["no_aplica", "sollicitat", "concedit", "pagat", "denegat"],
+                index=["no_aplica","sollicitat","concedit","pagat","denegat"].index(_tr_estat)
+                      if _tr_estat in ["no_aplica","sollicitat","concedit","pagat","denegat"] else 0,
+            )
+            _f_tr_quantia = st.number_input("Tiquet Rural — quantia (€)", min_value=0.0,
+                                            value=float(_cfg.get("tiquet_rural_quantia", 0) or 0),
+                                            step=500.0)
+            try:
+                _tr_data_val = date.fromisoformat(_cfg.get("tiquet_rural_data_resolucio", "") or date.today().isoformat())
+            except Exception:
+                _tr_data_val = date.today()
+            _f_tr_data = st.date_input("Tiquet Rural — data resolució prevista", value=_tr_data_val)
+
+            if st.form_submit_button("💾 Desar configuració", type="primary"):
+                _nova_config = {
+                    "data_alta_prevista": _f_alta_prev.isoformat(),
+                    "data_alta_real": _f_alta_real.isoformat() if _f_donat else "",
+                    "tarifa_plana_prorrogada": "TRUE" if _f_prorrogada else "FALSE",
+                    "iva_per_defecte": "TRUE" if _f_iva else "FALSE",
+                    "factures_aprox_mes": str(int(_f_factures)),
+                    "retencio_irpf_pct": str(int(_f_retencio.replace("%","")) / 100),
+                    "tiquet_rural_estat": _f_tr_estat,
+                    "tiquet_rural_quantia": str(int(_f_tr_quantia)),
+                    "tiquet_rural_data_resolucio": _f_tr_data.isoformat(),
+                }
+                guardar_config(conn, _nova_config)
+                st.success("✅ Configuració desada.")
+                st.rerun()
 
 # --- TAB 2: EDITAR DADES ---
 with t2:
