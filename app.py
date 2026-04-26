@@ -446,73 +446,143 @@ with t1:
         st.button("Enviar Text", on_click=processar_text_callback)
 
     with col_foto:
-        im = st.file_uploader("Pujar Tiquet", type=['jpg', 'jpeg', 'png'])
-        prompt_foto = (
-            f"AVUI ÉS: {date.today()}. Analitza foto. Retorna LLISTA JSON: "
-            "'data', 'concepte', 'establiment', 'quantitat', 'categoria', "
-            "'tipus' (Despesa/Ingrés), 'es_periodic' (bool)."
+        imatges = st.file_uploader(
+            "Pujar Tiquets", type=['jpg', 'jpeg', 'png'],
+            accept_multiple_files=True
         )
 
-        if st.button("Processar Foto") and im:
-            if im.size > MAX_IMG_BYTES:
-                st.error(f"La imatge és massa gran ({im.size/1024/1024:.1f} MB). Màx {MAX_IMG_BYTES//1024//1024} MB.")
-            else:
-                with st.spinner("Llegint tiquet..."):
-                    try:
-                        img_p = Image.open(im)
-                        res = amb_reintents(model.generate_content, [prompt_foto, "Extreu productes:", img_p])
-                        dades = parsejar_json_ia(res.text)
+        prompt_foto = f"""AVUI ÉS: {date.today().isoformat()}.
 
-                        noves = []
-                        msg_resum = ""
-                        grup = "IMG_" + str(uuid.uuid4())[:8]
-                        for item in dades:
-                            t_prov = item.get('tipus', 'Despesa')
-                            if str(t_prov).strip().lower() not in PARAULES_INGRES:
-                                t_prov = "Despesa"
+Tasca: Llegir un tiquet de compra (foto). Extreure cada producte com un moviment separat.
+O, si el tiquet és global (sense desglossament), un sol moviment amb el total.
 
-                            quant_final = corregir_signe(item.get('quantitat', 0), t_prov)
+Retorna NOMÉS un array JSON. Sense text addicional, sense markdown wrappers.
 
-                            noves.append({
-                                "data": item.get('data') or date.today(),
-                                "concepte": item.get('concepte') or "Tiquet",
-                                "establiment": item.get('establiment') or "",
-                                "quantitat": quant_final,
-                                "categoria": item.get('categoria') or "Altres",
-                                "tipus": t_prov,
-                                "es_periodic": False,
-                                "id_grup": grup,
-                            })
-                            msg_resum += f"- {item.get('concepte')}: {quant_final}€\n"
+Schema per moviment:
+{{
+  "data": "YYYY-MM-DD",
+  "concepte": "string ≤40 chars",
+  "establiment": "string (pot ser buit)",
+  "quantitat": número positiu (mai negatiu),
+  "categoria": una de [Llar, Subscripcions, Alimentació, Restauració, Transport,
+                       Salut, Oci, Roba, Deute, Altres],
+  "tipus": "Despesa",
+  "es_periodic": false
+}}
 
-                        df_final = pd.concat([df, pd.DataFrame(noves)], ignore_index=True)
-                        guardar_dades(df_final)
+Regles:
+- Establiment: extreure'l de la capçalera del tiquet.
+- Data: la del tiquet, no avui. Si no es veu, posar avui.
+- Tipus: sempre "Despesa".
+- es_periodic: sempre false.
+- Si la foto és il·legible, retorna [].
+"""
 
-                        st.session_state["ultim_moviment"] = msg_resum
-                        st.rerun()
-                    except json.JSONDecodeError:
-                        st.error("La IA no ha retornat un JSON vàlid. Prova amb una foto més clara.")
-                    except Exception as e:
-                        st.error(f"Error processant la foto: {str(e)[:200]}")
+        if imatges:
+            st.caption(f"{len(imatges)} imatge(s) seleccionada(s)")
+            cols_prev = st.columns(min(len(imatges), 4))
+            for i, img_file in enumerate(imatges[:4]):
+                with cols_prev[i]:
+                    st.image(img_file, use_container_width=True)
+            if len(imatges) > 4:
+                st.caption(f"... i {len(imatges) - 4} més sense previsualitzar")
+
+        if st.button("Processar Tiquets", type="primary", disabled=not imatges):
+            noves_total = []
+            msg_resum = ""
+            errors = []
+
+            progress = st.progress(0, text="Processant tiquets...")
+            total = len(imatges)
+
+            for idx, im in enumerate(imatges):
+                progress.progress(idx / total, text=f"Processant {idx + 1}/{total}: {im.name}")
+
+                if im.size > MAX_IMG_BYTES:
+                    errors.append(f"**{im.name}**: massa gran ({im.size/1024/1024:.1f} MB, màx {MAX_IMG_BYTES//1024//1024} MB).")
+                    continue
+
+                try:
+                    img_p = Image.open(im)
+                    res = amb_reintents(model.generate_content, [prompt_foto, img_p])
+                    dades = parsejar_json_ia(res.text)
+
+                    grup = "IMG_" + str(uuid.uuid4())[:8]
+                    for item in dades:
+                        t_prov = item.get('tipus', 'Despesa')
+                        if str(t_prov).strip().lower() not in PARAULES_INGRES:
+                            t_prov = "Despesa"
+                        quant_final = corregir_signe(item.get('quantitat', 0), t_prov)
+                        noves_total.append({
+                            "data": item.get('data') or date.today(),
+                            "concepte": item.get('concepte') or "Tiquet",
+                            "establiment": item.get('establiment') or "",
+                            "quantitat": quant_final,
+                            "categoria": item.get('categoria') or "Altres",
+                            "tipus": t_prov,
+                            "es_periodic": False,
+                            "id_grup": grup,
+                        })
+                        msg_resum += f"- {item.get('concepte')}: {quant_final}€\n"
+
+                except json.JSONDecodeError:
+                    errors.append(f"**{im.name}**: la IA no ha retornat un JSON vàlid. Prova amb una foto més clara.")
+                except Exception as e:
+                    errors.append(f"**{im.name}**: {str(e)[:150]}")
+
+            progress.progress(1.0, text="Fet!")
+
+            if noves_total:
+                df_final = pd.concat([df, pd.DataFrame(noves_total)], ignore_index=True)
+                guardar_dades(df_final)
+                st.session_state["ultim_moviment"] = msg_resum
+
+            if errors:
+                st.error("Errors en alguns tiquets:\n\n" + "\n\n".join(errors))
+
+            if noves_total:
+                st.rerun()
 
 # --- TAB 2: ASSESSORIA ESTRATÈGICA ---
 with t2:
     st.subheader("🧠 L'Assessor de la Família")
-    st.info("Aquest anàlisi té en compte: Jose (Atur), Ingrés Lloguer (850€), Deute (165€) i Reclamació BBVA.")
+    st.info("Context familiar: Jose Manuel a punt de ser autònom (800–1.000€/mes), Alba nòmina ~1.300€/mes, lloguer rebut 550€/mes.")
     if st.button("Generar Anàlisi del Mes"):
         with st.spinner("Consultant l'estratègia amb Gemini..."):
             resum_cat = df_filtrat.groupby('categoria')['quantitat'].sum().to_string() if not df_filtrat.empty else "Sense dades"
-            prompt_advisor = f"""
-            Actua com un assessor financer expert per a una família (Jose Manuel i Alba).
-            CONTEXT FAMILIAR:
-            - Jose Manuel està a l'atur tot i que té ingressos recurrents per treballs d'edició web.
-            - Ingrés extra lloguer 550€/mes.
-            - Nómina de l'Alba de 1.300€ aprox.
-            - Esperant reclamació BBVA 1.800€.
-            DADES MES: Ingressos {ingr}€, Despeses {desp}€.
-            Desglossament: {resum_cat}
-            TASCA: 3 consells breus, estratègics i empàtics.
-            """
+            prompt_advisor = f"""Actua com un assessor financer expert per a una família catalana
+(Jose Manuel i Alba) en transició cap a autònom.
+
+CONTEXT:
+- Jose Manuel: a punt de ser autònom (web/SEO/edició).
+  Ingressos actuals 800–1.000€/mes amb previsió creixent.
+  Tarifa plana 80€/mes el primer any (real ~88,64€ amb MEI 0,9%).
+  Provisió necessària: ~20% IRPF + IVA si factura amb IVA.
+- Alba: nòmina ~1.300€/mes (estable).
+- Ingrés extra: lloguer 550€/mes (recurrent).
+- Localització: Calders, Bages, Catalunya.
+
+DADES DEL PERÍODE:
+- Ingressos totals: {ingr:.2f}€
+- Despeses totals: {desp:.2f}€
+- Saldo: {ingr + desp:.2f}€
+- Desglossament per categoria:
+{resum_cat}
+
+TASCA: Generar exactament 3 consells:
+1) Un de provisió fiscal (autònom).
+2) Un de fons d'emergència o estalvi (objectiu 3–6 mesos despeses fixes).
+3) Un d'optimització de despesa concreta detectada al desglossament.
+
+FORMAT:
+- Markdown amb capçaleres ##.
+- To proper, en català, sense paternalisme.
+- Cada consell amb: 1 frase de diagnòstic + 1 frase d'acció concreta.
+- Inclou xifres concretes, no generalitats.
+- Màxim 200 paraules totals.
+
+NO incloguis: introduccions, salutacions, disclaimers, "espero que t'ajudi".
+"""
             try:
                 res_adv = amb_reintents(model.generate_content, prompt_advisor)
                 st.markdown(res_adv.text)

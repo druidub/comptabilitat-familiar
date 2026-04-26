@@ -1,4 +1,15 @@
+# Entorns virtuals
 venv/
-__pycache__/
+
+# Secrets i configuracions locals (MOLT IMPORTANT)
 .streamlit/
+secrets.toml
+*.toml
+.env
 *.json
+
+# Memòria cau de Python i sistema Mac
+__pycache__/
+*.pyc
+.DS_Store
+
