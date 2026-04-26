@@ -25,7 +25,7 @@ from core.pressupostos import (
 )
 
 
-APP_VERSION = "v2.8"
+APP_VERSION = "v3.0"
 GEMINI_MODEL = "gemini-2.5-flash"
 GSHEETS_TTL = 60
 MAX_IMG_BYTES = 5 * 1024 * 1024
