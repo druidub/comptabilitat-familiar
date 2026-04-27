@@ -540,7 +540,7 @@ def processar_text_callback():
 avui = date.today()
 with st.sidebar:
     st.title("🏦 Família Finances")
-    st.caption(f"{APP_VERSION} - Jose & Alba Edition")
+    st.caption(APP_VERSION)
     st.divider()
 
     st.subheader("📅 Filtres")
