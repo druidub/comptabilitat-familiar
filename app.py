@@ -541,6 +541,10 @@ avui = date.today()
 with st.sidebar:
     st.title("🏦 Família Finances")
     st.caption(APP_VERSION)
+    st.markdown(
+        "[📖 Ajuda](https://github.com/druidub/comptabilitat-familiar/blob/main/docs/MANUAL_GENERAL.md)",
+        unsafe_allow_html=False,
+    )
     st.divider()
 
     st.subheader("📅 Filtres")
