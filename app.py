@@ -241,11 +241,20 @@ if not check_password():
 API_KEY = st.secrets["GEMINI_API_KEY"]
 conn = st.connection("gsheets", type=GSheetsConnection)
 client = genai.Client(api_key=API_KEY)
-inicialitzar_config(conn)
+try:
+    inicialitzar_config(conn)
+    inicialitzar_config_app(conn)
+except Exception as e:
+    st.error(
+        "⚠️ No s'ha pogut inicialitzar la configuració del Sheet. "
+        "Pot ser una saturació temporal de quota Google. "
+        "Espera 1 minut i refresca la pàgina."
+    )
+    st.caption(f"Detall tècnic: {type(e).__name__}")
+    st.stop()
 _assegurar_columna_aplica_iva(conn)
 config_autonom = carregar_config(conn)
 inicialitzar_pressupostos(conn)
-inicialitzar_config_app(conn)
 config_app = carregar_config_app(conn)
 
 # --- HELPERS DE RESILIÈNCIA ---
