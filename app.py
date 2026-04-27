@@ -29,9 +29,10 @@ from core.config_app import (
 from core.cash_flow import (
     projectar_saldo, detectar_alertes_saldo, saldo_minim_previst, proximes_ocurrencies,
 )
+from core.anomalies import detectar_totes_anomalies
 
 
-APP_VERSION = "v3.0"
+APP_VERSION = "v3.0 - Insights Edition"
 GEMINI_MODEL = "gemini-2.5-flash"
 GSHEETS_TTL = 60
 MAX_IMG_BYTES = 5 * 1024 * 1024
@@ -439,6 +440,51 @@ def aplicar_tema(fig: go.Figure, titol: str = "") -> go.Figure:
     )
     return fig
 
+def prompt_resum_anomalies(anomalies: dict) -> str:
+    n_var = len(anomalies.get("variacions", []))
+    n_ind = len(anomalies.get("individuals", []))
+    n_nov = len(anomalies.get("noves", []))
+    if n_var + n_ind + n_nov == 0:
+        return ""
+    linies = []
+    for v in anomalies.get("variacions", []):
+        signe = "+" if v["variacio_pct"] > 0 else ""
+        linies.append(
+            f"- Categoria {v['categoria']}: {signe}{v['variacio_pct']:.0f}% vs mesos anteriors "
+            f"(actual {v['actual_normalitzat']:.0f}€, mitjana {v['mitjana_historic']:.0f}€)"
+        )
+    for i in anomalies.get("individuals", []):
+        linies.append(
+            f"- Despesa individual alta: {i['concepte']} de {i['quantitat']:.0f}€ "
+            f"({i['factor']:.1f}x la mediana de {i['categoria']})"
+        )
+    for n in anomalies.get("noves", []):
+        linies.append(
+            f"- Categoria nova aquest mes: {n['categoria']} ({n['total']:.0f}€, {n['moviments']} moviments)"
+        )
+    return (
+        "Ets un assessor financer per a la família Jose Manuel i Alba.\n"
+        "Has detectat les següents anomalies de despesa aquest mes:\n\n"
+        + "\n".join(linies)
+        + "\n\nGenera un resum breu (màxim 150 paraules) en català, to proper, amb:\n"
+        "1. Una frase de context global (preocupant o no?).\n"
+        "2. La 1 o 2 anomalies més rellevants amb consell concret.\n"
+        "3. Una frase de tancament positiu o d'acció.\n\n"
+        "Sense introduccions ni salutacions. Markdown amb ** per a èmfasis."
+    )
+
+
+@st.cache_data(ttl=3600)
+def _generar_resum_ia_cached(_client, model: str, prompt: str) -> str:
+    if not prompt:
+        return ""
+    try:
+        res = amb_reintents(_client.models.generate_content, model=model, contents=prompt)
+        return res.text
+    except Exception as e:
+        return f"⚠️ No s'ha pogut generar el resum: {str(e)[:100]}"
+
+
 # --- CALLBACK PER AL TEXT ---
 def processar_text_callback():
     text_val = st.session_state.get("input_text_key", "")
@@ -556,9 +602,15 @@ def _rec_a_dict(df_rec: pd.DataFrame) -> list[dict]:
 recurrents_llista = _rec_a_dict(df_recurrents_config)
 df_proj_full = projectar_saldo(saldo_actual, recurrents_llista, avui, dies=90)
 alertes_saldo = detectar_alertes_saldo(df_proj_full, llindar=llindar_alerta)
+anomalies = detectar_totes_anomalies(df, avui, config_app)
 
 # --- BARRA LATERAL (part 2: alertes + notificacions) ---
 with st.sidebar:
+    _n_anomalies = sum(len(anomalies.get(k, [])) for k in ("variacions", "individuals", "noves"))
+    if _n_anomalies > 0:
+        st.markdown("### 🔍 Anomalies detectades")
+        st.warning(f"{_n_anomalies} anomalia(es) aquest mes · Veure pestanya Insights")
+
     if alertes_saldo:
         st.markdown("### 💧 Alertes liquiditat")
         primera = alertes_saldo[0]
@@ -894,7 +946,7 @@ if not df.empty:
 # =================================================
 # 2. PESTANYES
 # =================================================
-t1, t2, t5, t3, t4 = st.tabs(["➕ Afegir Moviment", "✏️ Editar Dades", "🧾 Autònom", "🧠 Assessoria IA", "⚙️ Configurar Recurrents"])
+t1, t2, t5, t_ins, t3, t4 = st.tabs(["➕ Afegir Moviment", "✏️ Editar Dades", "🧾 Autònom", "🔍 Insights", "🧠 Assessoria IA", "⚙️ Configurar Recurrents"])
 
 # --- TAB 1: INPUT ---
 with t1:
@@ -1001,6 +1053,86 @@ Regles:
 
             if noves_total:
                 st.rerun()
+
+# --- TAB INSIGHTS ---
+with t_ins:
+    st.subheader("🔍 Insights del mes")
+
+    _var = anomalies.get("variacions", [])
+    _ind = anomalies.get("individuals", [])
+    _nov = anomalies.get("noves", [])
+    _total_an = len(_var) + len(_ind) + len(_nov)
+
+    if _total_an == 0:
+        st.success("✅ Cap anomalia detectada aquest mes. Les despeses segueixen el patró habitual.")
+    else:
+        # Resum IA (cached 1h)
+        _prompt_an = prompt_resum_anomalies(anomalies)
+        _resum_ia = _generar_resum_ia_cached(client, GEMINI_MODEL, _prompt_an)
+        if _resum_ia and not _resum_ia.startswith("⚠️"):
+            st.markdown(
+                '<div class="custom-card accent" style="margin-bottom:16px;">'
+                '<div class="card-title">Resum IA</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_resum_ia)
+            st.markdown("</div>", unsafe_allow_html=True)
+        elif _resum_ia.startswith("⚠️"):
+            st.warning(_resum_ia)
+
+        # Variacions per categoria
+        if _var:
+            st.markdown("### 📈 Variació per categoria")
+            for v in _var:
+                _color = "var(--danger)" if v["tipus"] == "augment" else "var(--success)"
+                _icon = "🔺" if v["tipus"] == "augment" else "🔻"
+                _signe = "+" if v["variacio_pct"] > 0 else ""
+                st.markdown(
+                    f'<div class="custom-card" style="border-left: 4px solid {_color};margin-bottom:8px;">'
+                    f'<strong>{_icon} {v["categoria"]}</strong> — '
+                    f'<span style="color:{_color};font-weight:700;">{_signe}{v["variacio_pct"]:.0f}%</span>'
+                    f'<br><span style="color:var(--text-secondary);font-size:0.9rem;">'
+                    f'Actual: {v["actual_normalitzat"]:.0f}€ · Mitjana historial: {v["mitjana_historic"]:.0f}€</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Despeses individuals atípiques
+        if _ind:
+            st.markdown("### 💸 Despeses individuals atípiques")
+            for i in _ind:
+                _data_str = i["data"].strftime("%d/%m") if hasattr(i["data"], "strftime") else str(i["data"])
+                st.markdown(
+                    f'<div class="custom-card" style="border-left: 4px solid var(--warning);margin-bottom:8px;">'
+                    f'<strong>⚠️ {i["concepte"]}</strong>'
+                    + (f' · {i["establiment"]}' if i.get("establiment") else "")
+                    + f'<br>'
+                    f'<span style="color:var(--danger);font-weight:700;">{i["quantitat"]:.2f}€</span>'
+                    f' — <span style="color:var(--text-secondary);font-size:0.9rem;">'
+                    f'{i["factor"]:.1f}x la mediana ({i["mediana_categoria"]:.0f}€) de {i["categoria"]} · {_data_str}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Categories noves
+        if _nov:
+            st.markdown("### 🆕 Categories noves")
+            for n in _nov:
+                st.markdown(
+                    f'<div class="custom-card" style="border-left: 4px solid var(--accent);margin-bottom:8px;">'
+                    f'<strong>🆕 {n["categoria"]}</strong>'
+                    f'<br><span style="color:var(--text-secondary);font-size:0.9rem;">'
+                    f'{n["total"]:.2f}€ · {n["moviments"]} moviment(s) · No apareixia els 3 mesos anteriors</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.caption(
+            f"Anàlisi sobre {len(df)} moviments totals. "
+            "Llindar variació: "
+            f"{config_app.get('llindar_anomalia_pct', 30.0):.0f}% · "
+            f"Factor individual: {config_app.get('factor_mediana_atipica', 2.0):.1f}x"
+        )
 
 # --- TAB 3: ASSESSORIA ESTRATÈGICA ---
 with t3:
@@ -1112,10 +1244,30 @@ with t4:
             options=[30, 60, 90],
             index=[30, 60, 90].index(horitzo_defecte) if horitzo_defecte in [30, 60, 90] else 1,
         )
+        _nou_llindar_an = st.number_input(
+            "Llindar anomalia per categoria (%)",
+            min_value=5.0,
+            max_value=200.0,
+            value=float(config_app.get("llindar_anomalia_pct", 30.0)),
+            step=5.0,
+            format="%.0f",
+            help="Variació mínima respecte la mitjana dels 3 mesos anteriors per generar alerta.",
+        )
+        _nou_factor_med = st.number_input(
+            "Factor mediana despesa individual",
+            min_value=1.1,
+            max_value=10.0,
+            value=float(config_app.get("factor_mediana_atipica", 2.0)),
+            step=0.5,
+            format="%.1f",
+            help="Multiplicador sobre la mediana de la categoria per considerar una despesa atípica.",
+        )
         if st.button("💾 Desar configuració", key="btn_desar_config_app"):
             guardar_config_app(conn, {
                 "llindar_alerta_saldo": str(_nou_llindar),
                 "horitzo_projeccio_dies": str(_nou_horitzo),
+                "llindar_anomalia_pct": str(_nou_llindar_an),
+                "factor_mediana_atipica": str(_nou_factor_med),
             })
             st.success("Configuració desada.")
             st.rerun()
