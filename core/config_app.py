@@ -12,11 +12,15 @@ PESTANYA = "Config_App"
 DEFAULTS: dict[str, str] = {
     "llindar_alerta_saldo": "500",
     "horitzo_projeccio_dies": "60",
+    "llindar_anomalia_pct": "30.0",
+    "factor_mediana_atipica": "2.0",
 }
 
 TIPUS_CONFIG_APP: dict[str, str] = {
     "llindar_alerta_saldo": "float",
     "horitzo_projeccio_dies": "int",
+    "llindar_anomalia_pct": "float",
+    "factor_mediana_atipica": "float",
 }
 
 
