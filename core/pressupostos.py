@@ -80,7 +80,7 @@ def carregar_pressupostos(_conn) -> dict[str, float]:
 def guardar_pressupostos(conn, pressupostos: dict[str, float]) -> None:
     files = [{"categoria": k, "import_mensual": v} for k, v in pressupostos.items()]
     conn.update(worksheet=PESTANYA, data=pd.DataFrame(files))
-    st.cache_data.clear()
+    carregar_pressupostos.clear()
 
 
 def estat_pressupost(

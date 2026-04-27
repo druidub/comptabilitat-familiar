@@ -154,19 +154,15 @@ def guardar_config(conn, config: dict) -> None:
 
     files = [{"clau": k, "valor": _ser(v)} for k, v in config.items()]
     conn.update(worksheet=PESTANYA, data=pd.DataFrame(files))
-    st.cache_data.clear()
+    carregar_config.clear()
 
 
 def inicialitzar_config(conn) -> None:
     """Crea Config_Autonom (si cal) i omple els defaults. Schema cached per sessió."""
     _assegurar_pestanya(conn)
-    try:
-        df = conn.read(worksheet=PESTANYA, ttl=300)
-        if df is not None and not df.empty and "clau" in df.columns:
-            return
-    except Exception:
-        pass
-    guardar_config(conn, DEFAULTS.copy())
+    config_actual = carregar_config(conn)
+    if not config_actual:
+        guardar_config(conn, DEFAULTS.copy())
 
 
 def es_mode_preview(config: dict) -> bool:

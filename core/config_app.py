@@ -71,15 +71,11 @@ def carregar_config_app(_conn) -> dict:
 def guardar_config_app(conn, config: dict) -> None:
     files = [{"clau": k, "valor": str(v)} for k, v in config.items()]
     conn.update(worksheet=PESTANYA, data=pd.DataFrame(files))
-    st.cache_data.clear()
+    carregar_config_app.clear()
 
 
 def inicialitzar_config_app(conn) -> None:
     _assegurar_pestanya_config_app(conn)
-    try:
-        df = conn.read(worksheet=PESTANYA, ttl=300)
-        if df is not None and not df.empty and "clau" in df.columns:
-            return
-    except Exception:
-        pass
-    guardar_config_app(conn, DEFAULTS.copy())
+    config_actual = carregar_config_app(conn)
+    if not config_actual:
+        guardar_config_app(conn, DEFAULTS.copy())

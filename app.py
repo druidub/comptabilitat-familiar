@@ -1239,7 +1239,6 @@ with t4:
     if st.button("💾 Desar pressupostos", type="primary", key="btn_desar_pp"):
         nous_pp = dict(zip(_pp_editat["categoria"], _pp_editat["import_mensual"]))
         guardar_pressupostos(conn, nous_pp)
-        st.cache_data.clear()
         st.success("Pressupostos actualitzats.")
         st.rerun()
 
