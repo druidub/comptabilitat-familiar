@@ -28,20 +28,23 @@ def _spreadsheet(conn):
     return conn.client._open_spreadsheet()
 
 
-def _assegurar_pestanya_pressupostos(conn) -> None:
-    sh = _spreadsheet(conn)
+@st.cache_resource(show_spinner=False)
+def _assegurar_pestanya_pressupostos(_conn) -> bool:
+    """Crea la pestanya Pressupostos si no existeix. Cached per sessió."""
+    sh = _conn.client._open_spreadsheet()
     try:
         sh.worksheet(PESTANYA)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=PESTANYA, rows=20, cols=2)
         ws.update_cell(1, 1, "categoria")
         ws.update_cell(1, 2, "import_mensual")
+    return True
 
 
 def inicialitzar_pressupostos(conn) -> None:
     _assegurar_pestanya_pressupostos(conn)
     try:
-        df = conn.read(worksheet=PESTANYA, ttl=0)
+        df = conn.read(worksheet=PESTANYA, ttl=300)
         if df is not None and not df.empty and "categoria" in df.columns:
             return
     except Exception:
@@ -69,7 +72,7 @@ def _carregar_pressupostos_raw(conn) -> dict[str, float]:
         return FILES_INICIALS.copy()
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def carregar_pressupostos(_conn) -> dict[str, float]:
     return _carregar_pressupostos_raw(_conn)
 

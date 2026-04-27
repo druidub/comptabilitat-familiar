@@ -24,12 +24,15 @@ def _spreadsheet(conn):
     return conn.client._open_spreadsheet()
 
 
-def _assegurar_pestanya_config_app(conn) -> None:
-    sh = _spreadsheet(conn)
+@st.cache_resource(show_spinner=False)
+def _assegurar_pestanya_config_app(_conn) -> bool:
+    """Crea la pestanya Config_App si no existeix. Cached per sessió."""
+    sh = _conn.client._open_spreadsheet()
     try:
         sh.worksheet(PESTANYA)
     except gspread.WorksheetNotFound:
         sh.add_worksheet(title=PESTANYA, rows=10, cols=2)
+    return True
 
 
 def _carregar_config_app_raw(conn) -> dict:
@@ -56,7 +59,7 @@ def _config_app_tipada(config_cru: dict) -> dict:
     }
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def carregar_config_app(_conn) -> dict:
     return _carregar_config_app_raw(_conn)
 
@@ -70,7 +73,7 @@ def guardar_config_app(conn, config: dict) -> None:
 def inicialitzar_config_app(conn) -> None:
     _assegurar_pestanya_config_app(conn)
     try:
-        df = conn.read(worksheet=PESTANYA, ttl=0)
+        df = conn.read(worksheet=PESTANYA, ttl=300)
         if df is not None and not df.empty and "clau" in df.columns:
             return
     except Exception:

@@ -78,22 +78,25 @@ def _col_letter(n: int) -> str:
     return result
 
 
-def _assegurar_pestanya(conn) -> None:
-    """Crea Config_Autonom al Sheet si no existeix (operació d'esquema via gspread)."""
-    sh = _spreadsheet(conn)
+@st.cache_resource(show_spinner=False)
+def _assegurar_pestanya(_conn) -> bool:
+    """Crea Config_Autonom si no existeix. Cached per sessió: s'executa un sol cop."""
+    sh = _conn.client._open_spreadsheet()
     try:
         sh.worksheet(PESTANYA)
     except gspread.WorksheetNotFound:
         sh.add_worksheet(title=PESTANYA, rows=20, cols=2)
+    return True
 
 
-def _assegurar_columna_aplica_iva(conn) -> None:
-    """Afegeix aplica_iva a la pestanya principal si no existeix (gspread natiu)."""
-    sh = _spreadsheet(conn)
+@st.cache_resource(show_spinner=False)
+def _assegurar_columna_aplica_iva(_conn) -> bool:
+    """Afegeix aplica_iva a la pestanya principal si no existeix. Cached per sessió."""
+    sh = _conn.client._open_spreadsheet()
     ws = sh.get_worksheet(0)
     capçaleres = ws.row_values(1)
     if "aplica_iva" in capçaleres:
-        return
+        return True
     nova_col = len(capçaleres) + 1
     lletra = _col_letter(nova_col)
     ws.update_cell(1, nova_col, "aplica_iva")
@@ -103,6 +106,7 @@ def _assegurar_columna_aplica_iva(conn) -> None:
             f"{lletra}2:{lletra}{n_files + 1}",
             [["FALSE"]] * n_files,
         )
+    return True
 
 
 def _carregar_config_raw(conn) -> dict:
@@ -131,7 +135,7 @@ def _config_tipada(config_cru: dict) -> dict:
     }
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def carregar_config(_conn) -> dict:
     """Llegeix Config_Autonom (cached 60s). Usa _conn per evitar hashing de connexió."""
     return _carregar_config_raw(_conn)
@@ -154,10 +158,10 @@ def guardar_config(conn, config: dict) -> None:
 
 
 def inicialitzar_config(conn) -> None:
-    """Crea Config_Autonom (si cal) i omple els defaults."""
+    """Crea Config_Autonom (si cal) i omple els defaults. Schema cached per sessió."""
     _assegurar_pestanya(conn)
     try:
-        df = conn.read(worksheet=PESTANYA, ttl=0)
+        df = conn.read(worksheet=PESTANYA, ttl=300)
         if df is not None and not df.empty and "clau" in df.columns:
             return
     except Exception:

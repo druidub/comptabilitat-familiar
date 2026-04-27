@@ -455,3 +455,66 @@ def _coerce(valor, tipus: str):
 - Llegir dades → `conn.read(worksheet=..., ttl=N)`
 - Escriure/actualitzar dades existents → `conn.update(worksheet=..., data=df)`
 - Gspread **només** per a: crear worksheets, afegir/eliminar columnes, canviar format.
+
+---
+
+## Gestió de quota Google Sheets
+
+Google Sheets API limita **60 operacions/minut/usuari**. Streamlit rerenderitza l'script sencer a cada interacció, de manera que qualsevol crida sense cache s'executa N vegades per sessió.
+
+### Regla 1 — Operacions d'efecte secundari (schema): `@st.cache_resource`
+
+Funcions que creen pestanyes o afegeixen columnes s'han d'executar **exactament un cop per sessió**:
+
+```python
+@st.cache_resource(show_spinner=False)
+def _assegurar_pestanya(_conn) -> bool:
+    """_conn amb subratllat: Streamlit omet el hash d'aquest argument."""
+    sh = _conn.client._open_spreadsheet()
+    try:
+        sh.worksheet(NOM_PESTANYA)
+    except gspread.WorksheetNotFound:
+        sh.add_worksheet(title=NOM_PESTANYA, rows=20, cols=2)
+    return True
+```
+
+> **Per què `_conn` i no `conn`?** Streamlit no sap fer hash d'objectes de connexió. El subratllat li diu "no facis hash d'aquest argument" — convenció obligatòria per a `cache_resource` i `cache_data`.
+
+> **Per què `cache_resource` i no `cache_data`?** `cache_resource` és per a recursos amb estat (connexions, models carregats, garanties d'esquema). No es serialitza. `cache_data` és per a dades pures que es poden serialitzar i comparar.
+
+### Regla 2 — Lectures de dades: `@st.cache_data(ttl=300)`
+
+TTL de 5 minuts equilibra frescor i quota. La invalidació explícita amb `st.cache_data.clear()` garanteix consistència immediatament després d'escriure:
+
+```python
+@st.cache_data(ttl=300)
+def carregar_config(_conn) -> dict:
+    return _carregar_config_raw(_conn)
+
+def guardar_config(conn, config: dict) -> None:
+    conn.update(worksheet=PESTANYA, data=pd.DataFrame(files))
+    st.cache_data.clear()  # invalida totes les lectures per a la propera rerenderització
+```
+
+### Regla 3 — Mai `ttl=0` a l'arrencada
+
+`conn.read(ttl=0)` força una lectura fresca a cada rerun. A les funcions `inicialitzar_*`, usar `ttl=300`:
+
+```python
+def inicialitzar_config(conn) -> None:
+    _assegurar_pestanya(conn)           # cached: 0 crides extra
+    try:
+        df = conn.read(worksheet=PESTANYA, ttl=300)  # cached: 1 crida/5 min
+        if df is not None and not df.empty and "clau" in df.columns:
+            return
+    except Exception:
+        pass
+    guardar_config(conn, DEFAULTS.copy())
+```
+
+### Patró de diagnòstic si apareix quota 429
+
+1. Buscar totes les crides a `_open_spreadsheet()`, `worksheet()`, `row_values()` sense `@st.cache_resource`.
+2. Buscar tots els `conn.read(ttl=0)` o `conn.read()` sense TTL.
+3. Verificar que totes les `_assegurar_*` retornen `bool` (el valor retornat és el que `cache_resource` guarda).
+4. Esperar 60 s per deixar que la quota es recuperi abans de reiniciar.
