@@ -23,6 +23,12 @@ from core.pressupostos import (
     inicialitzar_pressupostos, carregar_pressupostos, guardar_pressupostos,
     calcular_estats_categoria, CATEGORIES_DESPESA,
 )
+from core.config_app import (
+    carregar_config_app, guardar_config_app, inicialitzar_config_app,
+)
+from core.cash_flow import (
+    projectar_saldo, detectar_alertes_saldo, saldo_minim_previst, proximes_ocurrencies,
+)
 
 
 APP_VERSION = "v3.0"
@@ -238,6 +244,8 @@ inicialitzar_config(conn)
 _assegurar_columna_aplica_iva(conn)
 config_autonom = carregar_config(conn)
 inicialitzar_pressupostos(conn)
+inicialitzar_config_app(conn)
+config_app = carregar_config_app(conn)
 
 # --- HELPERS DE RESILIÈNCIA ---
 def amb_reintents(fn, *args, intents=3, base=1.0, **kwargs):
@@ -521,8 +529,43 @@ if opcio_data == "Aquest Mes":
 else:
     estats = {}
 
+# --- PREVISIÓ DE SALDO (global, per a sidebar i dashboard) ---
+saldo_actual = float(df["quantitat"].sum()) if not df.empty else 0.0
+llindar_alerta = config_app["llindar_alerta_saldo"]
+horitzo_defecte = config_app["horitzo_projeccio_dies"]
+
+
+def _rec_a_dict(df_rec: pd.DataFrame) -> list[dict]:
+    if df_rec.empty:
+        return []
+    freqs_suportades = {"Mensual", "Trimestral", "Anual", "Setmanal"}
+    result = []
+    for rec in df_rec.to_dict("records"):
+        try:
+            dia = int(float(str(rec.get("dia", 1))))
+            import_ = float(str(rec.get("quantitat", 0)))
+            freq = str(rec.get("frequencia", "Mensual"))
+            nom = str(rec.get("concepte", "Recurrent"))
+            if dia >= 1 and freq in freqs_suportades:
+                result.append({"nom": nom, "import": import_, "frequencia": freq, "dia": dia})
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+recurrents_llista = _rec_a_dict(df_recurrents_config)
+df_proj_full = projectar_saldo(saldo_actual, recurrents_llista, avui, dies=90)
+alertes_saldo = detectar_alertes_saldo(df_proj_full, llindar=llindar_alerta)
+
 # --- BARRA LATERAL (part 2: alertes + notificacions) ---
 with st.sidebar:
+    if alertes_saldo:
+        st.markdown("### 💧 Alertes liquiditat")
+        primera = alertes_saldo[0]
+        st.error(f"Saldo sota {llindar_alerta:.0f}€ a partir del {primera['data'].strftime('%d %b')}")
+        if len(alertes_saldo) > 1:
+            st.caption(f"+ {len(alertes_saldo) - 1} períodes més")
+
     if opcio_data == "Aquest Mes":
         estats_alerta = [(cat, e) for cat, e in estats.items() if e["estat"] == "vermell"]
         if estats_alerta:
@@ -723,6 +766,130 @@ if opcio_data == "Aquest Mes" and estats:
                     f'{_EMOJI_PP[_e["estat"]]}</div>',
                     unsafe_allow_html=True,
                 )
+
+# --- PREVISIÓ DE SALDO ---
+if not df.empty:
+    st.markdown("### 🔮 Previsió de saldo")
+
+    _horitzo_ui = st.segmented_control(
+        "Horitzó",
+        [30, 60, 90],
+        default=horitzo_defecte if horitzo_defecte in [30, 60, 90] else 60,
+        key="seg_horitzo",
+        label_visibility="collapsed",
+    )
+    if _horitzo_ui is None:
+        _horitzo_ui = horitzo_defecte if horitzo_defecte in [30, 60, 90] else 60
+
+    df_proj = df_proj_full[df_proj_full["data"] <= avui + timedelta(days=_horitzo_ui)].copy()
+
+    # Mètrica 1: saldo a 30 dies
+    _data_30 = avui + timedelta(days=30)
+    _row_30 = df_proj[df_proj["data"] == _data_30]
+    _saldo_30 = float(_row_30.iloc[0]["saldo_previst"]) if not _row_30.empty else saldo_actual
+    _delta_30 = _saldo_30 - saldo_actual
+
+    # Mètrica 2: saldo mínim
+    _data_min_proj, _val_min_proj = saldo_minim_previst(df_proj)
+
+    # Mètrica 3: pròxim moviment gran (|import| >= 200)
+    _proxim_gran = None
+    for _r in recurrents_llista:
+        if abs(_r["import"]) >= 200:
+            _occ = proximes_ocurrencies(_r, avui + timedelta(days=1), avui + timedelta(days=_horitzo_ui))
+            if _occ:
+                _cand = {"data": _occ[0], "nom": _r["nom"], "import": _r["import"]}
+                if _proxim_gran is None or _cand["data"] < _proxim_gran["data"]:
+                    _proxim_gran = _cand
+
+    _mc1, _mc2, _mc3 = st.columns(3)
+    _mc1.metric(
+        "Saldo previst (30 dies)",
+        f"{_saldo_30:,.2f} €",
+        delta=f"{_delta_30:+,.2f} €",
+        delta_color="normal" if _delta_30 >= 0 else "inverse",
+    )
+    _mc2.metric(
+        "Saldo mínim previst",
+        f"{_val_min_proj:,.2f} €",
+        delta=_data_min_proj.strftime("%d/%m/%Y"),
+        delta_color="off",
+    )
+    if _proxim_gran:
+        _mc3.metric(
+            "Pròxim moviment gran",
+            f"{_proxim_gran['import']:+,.0f} €",
+            delta=f"{_proxim_gran['nom']} · {_proxim_gran['data'].strftime('%d/%m')}",
+            delta_color="off",
+        )
+    else:
+        _mc3.metric("Pròxim moviment gran", "—")
+
+    # Moviments grans per al scatter del gràfic
+    _mg_chart = []
+    for _r in recurrents_llista:
+        if abs(_r["import"]) >= 200:
+            for _d in proximes_ocurrencies(_r, avui, avui + timedelta(days=_horitzo_ui)):
+                _rrow = df_proj[df_proj["data"] == _d]
+                if not _rrow.empty:
+                    _mg_chart.append({
+                        "data": _d,
+                        "nom": _r["nom"],
+                        "import": _r["import"],
+                        "saldo": float(_rrow.iloc[0]["saldo_previst"]),
+                    })
+
+    fig_proj = go.Figure()
+    fig_proj.add_trace(go.Scatter(
+        x=df_proj["data"],
+        y=df_proj["saldo_previst"],
+        mode="lines",
+        fill="tozeroy",
+        fillcolor="rgba(99,102,241,0.15)",
+        line=dict(color="#6366f1", width=2),
+        name="Saldo previst",
+        hovertemplate="%{x|%d/%m/%Y}<br>Saldo: %{y:,.2f} €<extra></extra>",
+    ))
+    fig_proj.add_hline(
+        y=llindar_alerta,
+        line_dash="dash",
+        line_color="#ef4444",
+        annotation_text=f"Llindar {llindar_alerta:.0f} €",
+        annotation_position="bottom right",
+    )
+    if _mg_chart:
+        fig_proj.add_trace(go.Scatter(
+            x=[m["data"] for m in _mg_chart],
+            y=[m["saldo"] for m in _mg_chart],
+            mode="markers",
+            marker=dict(
+                size=10,
+                color=["#10b981" if m["import"] > 0 else "#ef4444" for m in _mg_chart],
+                line=dict(width=1, color="white"),
+            ),
+            text=[f"{m['nom']} ({m['import']:+.0f}€)" for m in _mg_chart],
+            hovertemplate="%{text}<br>%{x|%d/%m/%Y}<br>Saldo: %{y:,.2f}€<extra></extra>",
+            name="Moviment gran",
+        ))
+    fig_proj.update_layout(
+        yaxis=dict(tickformat=",.0f", ticksuffix=" €"),
+        showlegend=False,
+        hovermode="x unified",
+    )
+    st.plotly_chart(aplicar_tema(fig_proj, f"Projecció de saldo — {_horitzo_ui} dies"), width="stretch")
+
+    # Alertes per a l'horitzó seleccionat
+    _alertes_proj = detectar_alertes_saldo(df_proj, llindar=llindar_alerta)
+    if _alertes_proj:
+        st.markdown("⚠️ **Alertes de liquiditat detectades:**")
+        for _al in _alertes_proj:
+            st.warning(_al["missatge"])
+
+    if not recurrents_llista:
+        st.caption(
+            "Sense moviments recurrents configurats, la projecció és constant. "
+            "Configura'n a la pestanya ⚙️ Configurar Recurrents."
+        )
 
 # =================================================
 # 2. PESTANYES
@@ -930,6 +1097,28 @@ with t4:
         st.cache_data.clear()
         st.success("Pressupostos actualitzats.")
         st.rerun()
+
+    st.markdown("---")
+    with st.expander("⚙️ Configuració general de l'app"):
+        _nou_llindar = st.number_input(
+            "Llindar d'alerta de saldo (€)",
+            min_value=0.0,
+            value=float(llindar_alerta),
+            step=50.0,
+            format="%.0f",
+        )
+        _nou_horitzo = st.selectbox(
+            "Horitzó de projecció per defecte (dies)",
+            options=[30, 60, 90],
+            index=[30, 60, 90].index(horitzo_defecte) if horitzo_defecte in [30, 60, 90] else 1,
+        )
+        if st.button("💾 Desar configuració", key="btn_desar_config_app"):
+            guardar_config_app(conn, {
+                "llindar_alerta_saldo": str(_nou_llindar),
+                "horitzo_projeccio_dies": str(_nou_horitzo),
+            })
+            st.success("Configuració desada.")
+            st.rerun()
 
 # --- TAB 5: AUTÒNOM ---
 with t5:
