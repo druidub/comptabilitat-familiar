@@ -53,8 +53,10 @@ Aquesta és l'única estructura que Gemini ha de retornar quan extreu moviments:
 
 ### Categories vàlides (tancades)
 
-Despeses: `Llar`, `Subscripcions`, `Alimentació`, `Restauració`, `Transport`, `Salut`, `Oci`, `Roba`, `Deute`, `Altres`.
+Despeses: `Llar`, `Subscripcions`, `Alimentació`, `Restauració`, `Transport`, `Salut`, `Oci`, `Roba`, `Deute`, `Tecnologia`, `Altres`.
 Ingressos: `Nòmina`, `Lloguer_Ingrés`, `Freelance`, `Bizum`, `Devolució`, `Ajut_Públic`, `Altres_Ingrés`.
+
+`Tecnologia`: hardware, software, SaaS de feina, hosting, dominis, perifèrics, formació tècnica.
 
 **Sempre incloure-les explícitament al prompt.** Gemini tendeix a improvisar ("Comestibles" en lloc d'"Alimentació") si no es força.
 
@@ -76,7 +78,7 @@ Schema per moviment:
   "establiment": "string (pot ser buit)",
   "quantitat": número positiu (mai negatiu),
   "categoria": una de [Llar, Subscripcions, Alimentació, Restauració,
-                       Transport, Salut, Oci, Roba, Deute, Altres,
+                       Transport, Salut, Oci, Roba, Deute, Tecnologia, Altres,
                        Nòmina, Lloguer_Ingrés, Freelance, Bizum,
                        Devolució, Altres_Ingrés],
   "tipus": "Despesa" o "Ingrés",
@@ -110,7 +112,7 @@ O, si el tiquet és global (sense desglossament), un sol moviment amb el total.
 Retorna NOMÉS un array JSON. Mateix schema que la pipeline d'extracció de text.
 
 Categories vàlides: Llar, Subscripcions, Alimentació, Restauració, Transport,
-Salut, Oci, Roba, Deute, Altres.
+Salut, Oci, Roba, Deute, Tecnologia, Altres.
 
 Regles especials:
 - Establiment: extreure'l de la capçalera del tiquet.
@@ -234,7 +236,7 @@ from datetime import date
 
 CATEGORIES_VALIDES = {
     "Llar", "Subscripcions", "Alimentació", "Restauració", "Transport",
-    "Salut", "Oci", "Roba", "Deute", "Altres",
+    "Salut", "Oci", "Roba", "Deute", "Tecnologia", "Altres",
     "Nòmina", "Lloguer_Ingrés", "Freelance", "Bizum", "Devolució",
     "Ajut_Públic", "Altres_Ingrés",
 }
