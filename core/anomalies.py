@@ -7,6 +7,8 @@ from datetime import date
 import pandas as pd
 
 CATEGORIES_EXCLOSES: frozenset[str] = frozenset({"Freelance", "Ajut_Públic"})
+LLINDAR_MINIM_DESPESA: float = 5.0    # despeses menors ignorades al càlcul de mediana i detecció
+LLINDAR_ABSOLUT_ATIPICA: float = 30.0  # import mínim per marcar una despesa com a atípica
 
 
 def normalitzar_a_mes_complet(total_acumulat: float, avui: date) -> float:
@@ -133,6 +135,13 @@ def despeses_individuals_atipiques(
     if df_d.empty:
         return []
 
+    # Excloure recurrents — per definició no són anomalies
+    if "es_periodic" in df_d.columns:
+        df_d = df_d[df_d["es_periodic"] != True]  # noqa: E712
+
+    # Ignorar despeses insignificants: distorsionen la mediana i no aporten valor
+    df_d = df_d[df_d["quantitat"].abs() >= LLINDAR_MINIM_DESPESA]
+
     mesos_prev = _mesos_anteriors(avui, mesos_historic)
     if not mesos_prev:
         return []
@@ -162,7 +171,7 @@ def despeses_individuals_atipiques(
         for _, row in df_cat_actual.iterrows():
             abs_q = abs(float(row["quantitat"]))
             factor = abs_q / mediana
-            if factor > factor_mediana:
+            if factor > factor_mediana and abs_q >= LLINDAR_ABSOLUT_ATIPICA:
                 resultat.append({
                     "data": row["data"],
                     "concepte": str(row.get("concepte", "")),

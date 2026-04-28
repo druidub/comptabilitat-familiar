@@ -14,10 +14,11 @@ from core.anomalies import (
 
 
 def _mov(data: date, concepte: str, quantitat: float, categoria: str,
-         establiment: str = "", tipus: str = "Despesa") -> dict:
+         establiment: str = "", tipus: str = "Despesa", es_periodic: bool = False) -> dict:
     return {
         "data": data, "concepte": concepte, "establiment": establiment,
         "quantitat": quantitat, "categoria": categoria, "tipus": tipus,
+        "es_periodic": es_periodic,
     }
 
 
@@ -174,6 +175,48 @@ def test_despeses_individuals_no_atipiques_no_apareixen():
 
 def test_despeses_individuals_df_buit():
     assert despeses_individuals_atipiques(pd.DataFrame(), date(2026, 4, 15)) == []
+
+
+def test_despeses_recurrents_no_detectades():
+    # Hipoteca 432€/mes marcada com a periòdica — no ha de ser mai atípica
+    avui = date(2026, 4, 30)
+    moviments = [
+        _mov(date(2026, mes, 1), "Hipoteca", -432.0, "Habitatge", es_periodic=True)
+        for mes in [1, 2, 3, 4]
+    ]
+    df = pd.DataFrame(moviments)
+    assert despeses_individuals_atipiques(df, avui, factor_mediana=2.0) == []
+
+
+def test_despesa_petita_sota_llindar_absolut_no_detectada():
+    # Factor 5x (25€/5€) però 25€ < LLINDAR_ABSOLUT_ATIPICA (30€) → no detectada
+    avui = date(2026, 4, 30)
+    moviments = [
+        _mov(date(2026, mes, 15), "Cafè", -5.0, "Restauració")
+        for mes in [1, 2, 3]
+    ]
+    moviments.append(_mov(date(2026, 4, 10), "Snack car", -25.0, "Restauració"))
+    df = pd.DataFrame(moviments)
+    resultat = despeses_individuals_atipiques(df, avui, factor_mediana=2.0)
+    assert resultat == []
+
+
+def test_despesa_35_mediana_5_detectada():
+    # Factor 7x (35€/5€) i 35€ >= LLINDAR_ABSOLUT_ATIPICA → SÍ detectada
+    avui = date(2026, 4, 30)
+    moviments = [
+        _mov(date(2026, mes, 15), "Cafè", -5.0, "Restauració")
+        for mes in [1, 2, 3]
+    ]
+    moviments.append(_mov(date(2026, 4, 10), "Sopar", -35.0, "Restauració"))
+    df = pd.DataFrame(moviments)
+    resultat = despeses_individuals_atipiques(df, avui, factor_mediana=2.0)
+
+    assert len(resultat) == 1
+    r = resultat[0]
+    assert r["quantitat"] == pytest.approx(35.0)
+    assert r["mediana_categoria"] == pytest.approx(5.0)
+    assert r["factor"] == pytest.approx(7.0)
 
 
 # ---------------------------------------------------------------------------
