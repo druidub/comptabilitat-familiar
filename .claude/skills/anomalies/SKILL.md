@@ -99,6 +99,25 @@ CATEGORIES_EXCLOSES: frozenset[str] = frozenset({"Freelance", "Ajut_Públic"})
 
 ---
 
+## Filtres de qualitat (només `despeses_individuals_atipiques`)
+
+Aplicats després de `_filtrar_despeses` per reduir falsos positius:
+
+1. **Excloure `es_periodic == True`** — les despeses recurrents (hipoteca, subscripcions) no són anomalies per definició. Si el camp no existeix al DataFrame, no s'aplica el filtre.
+
+2. **Llindar mínim de `LLINDAR_MINIM_DESPESA = 5€`** al càlcul de mediana i detecció — les despeses petites distorsionen la mediana cap avall i no aporten valor diagnòstic.
+
+3. **Llindar absolut de `LLINDAR_ABSOLUT_ATIPICA = 30€`** per marcar una despesa com atípica — una despesa que sigui 10× la mediana però de 8€ és irrellevant per a la salut financera.
+
+Condició de detecció completa: `factor > factor_mediana AND quantitat >= 30€`
+
+```python
+LLINDAR_MINIM_DESPESA: float = 5.0
+LLINDAR_ABSOLUT_ATIPICA: float = 30.0
+```
+
+---
+
 ## Paràmetres configurables (`Config_App`)
 
 | Clau | Tipus | Default | Descripció |

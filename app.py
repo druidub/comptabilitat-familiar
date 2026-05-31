@@ -33,7 +33,7 @@ from core.anomalies import detectar_totes_anomalies
 
 
 APP_VERSION = "v3.0 - Insights Edition"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3-flash"
 GSHEETS_TTL = 60
 MAX_IMG_BYTES = 5 * 1024 * 1024
 
