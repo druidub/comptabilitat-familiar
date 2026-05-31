@@ -7,14 +7,32 @@ description: Convencions per construir prompts de Gemini al projecte Família Fi
 
 Aquesta skill defineix com s'escriuen els prompts de Gemini en aquest projecte. Cada prompt nou ha de seguir aquestes regles, i tota crida ha de passar per la pipeline de validació.
 
+## Configuració de model
+
+El nom del model Gemini concret NO viu en aquesta skill — viu a `core/config_app.py`
+com a constant `GEMINI_MODEL`.
+
+Noms vàlids per a `generateContent` (verificats maig 2026):
+- `gemini-3.5-flash` — estable recent, 1.500 RPD free
+- `gemini-2.5-flash` — estable anterior, 250 RPD free
+- `gemini-2.5-flash-lite` — alta freqüència, 1.000 RPD free, 15 RPM
+- `gemini-2.5-pro` — raonament, 50 RPD free
+
+Models NO vàlids:
+- `gemini-3-flash` (nom comercial, no identificador d'API)
+- `gemini-2.0-flash` (deprecat des de març 2026)
+
+Si l'app té arquitectura amb dos models per cas d'ús, defineix `MODEL_EXTRACCIO`
+i `MODEL_ANALISI` a `core/config_app.py` i exposa-les via `get_model(proposit)`.
+
 ## Pipeline obligatòria
 
 Tota crida a Gemini ha de seguir aquest patró:
 
 ```python
-res = amb_reintents(model.generate_content, [prompt, contingut_usuari])
-dades = parsejar_json_ia(res.text)  # tolerant amb ```json wrappers
-validats = [validar_moviment(d) for d in dades]  # Pydantic o validació manual
+res = amb_reintents(client.models.generate_content, model=GEMINI_MODEL, contents=[prompt, contingut_usuari])
+dades = parsejar_json_ia(res.text)
+validats = [validar_moviment(d) for d in dades]
 ```
 
 **Per què**: Gemini de tant en tant retorna text amb wrappers de markdown, retorna `dict` quan demanes `list`, o inventa camps. La pipeline neutralitza els 3 problemes.
@@ -71,6 +89,10 @@ def prompt_text(text_usuari: str) -> str:
 Tasca: Extreure moviments financers del text de l'usuari.
 Retorna NOMÉS un array JSON. Sense text addicional, sense markdown wrappers.
 
+OBLIGATORI: usar exclusivament una categoria de la llista.
+Si no encaixa exactament, usar "Altres".
+MAI inventar variants ni sinònims ("Supermercat" no és vàlid, és "Alimentació").
+
 Schema per moviment:
 {{
   "data": "YYYY-MM-DD",
@@ -80,7 +102,7 @@ Schema per moviment:
   "categoria": una de [Llar, Subscripcions, Alimentació, Restauració,
                        Transport, Salut, Oci, Roba, Deute, Tecnologia, Altres,
                        Nòmina, Lloguer_Ingrés, Freelance, Bizum,
-                       Devolució, Altres_Ingrés],
+                       Devolució, Ajut_Públic, Altres_Ingrés],
   "tipus": "Despesa" o "Ingrés",
   "es_periodic": true/false
 }}
@@ -110,6 +132,10 @@ Tasca: Llegir un tiquet de compra (foto). Extreure cada producte com un moviment
 O, si el tiquet és global (sense desglossament), un sol moviment amb el total.
 
 Retorna NOMÉS un array JSON. Mateix schema que la pipeline d'extracció de text.
+
+OBLIGATORI: usar exclusivament una categoria de la llista.
+Si no encaixa exactament, usar "Altres".
+MAI inventar variants ni sinònims ("Supermercat" no és vàlid, és "Alimentació").
 
 Categories vàlides: Llar, Subscripcions, Alimentació, Restauració, Transport,
 Salut, Oci, Roba, Deute, Tecnologia, Altres.
